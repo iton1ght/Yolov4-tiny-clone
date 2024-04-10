@@ -6,17 +6,17 @@ import torch.nn as nn
 class BasicConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1):
         super().__init__()
-        #卷积层
+        # 卷积层
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, kernel_size//2, bias=False)
-        #标准层
+        # 标准层
         self.bn   = nn.BatchNorm2d(out_channels)
-        #激活层
+        # 激活层
         self.activation = nn.LeakyReLU(0.1)
     def forward(self, x):
         x = self.conv(x)
         x = self.bn(x)
         x = self.activation(x)
-#定义Resblock_body模块
+# 定义Resblock_body模块
 class Resblock_body(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
