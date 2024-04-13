@@ -35,9 +35,10 @@ class YoloLoss(nn.Module):
         pred = self.clip_by_tensor(pred, espsion, 1.0 - espsion)
         result = - target * torch.log(pred) - (1.0 - target) * torch.log(1.0 - pred)
         return result
-    # 定义真实框和预测框交并比计算函数
+    # 真实框和预测框交并比计算方法，输入为5维张量，返回值为4维张量
     def box_ciou(self, box_1, box_2):
         """
+        函数定义：计算真实框张量和预测框张量的所有CIoU
         输入为：
         ----------
         box_1: tensor, shape=(batch, feat_w, feat_h, anchor_num, 4), xywh
@@ -59,7 +60,7 @@ class YoloLoss(nn.Module):
         box_2_mins = box_2_xy - box_2_wh / 2.
         box_2_maxs = box_2_xy + box_1_wh / 2.
 
-        # 求真实框和预测框的交集的左上角和右下角坐标，并求交集面积和并集面积，求得交并比
+        # 求真实框和预测框‘所有的’交集的左上角和右下角坐标，并求交集面积和并集面积，求得交并比
         intersect_mins = torch.max(box_1_mins, box_2_mins)
         intersect_maxs = torch.min(box_1_maxs, box_2_maxs)
         intersect_wh   = torch.max(intersect_maxs - intersect_mins, torch.zeros_like(intersect_maxs))
@@ -70,7 +71,7 @@ class YoloLoss(nn.Module):
         iou            = intersect_area / torch.clamp(union_area,1e-6)
 
         # 求两个框中心点距离，为了简化运算避免开方，则求取中心点距离的平方
-        center_distance = torch.sum(torch.pow(box_1_xy - box_2_xy, 2), dim = -1) #此处指定最后一维为计算对象，将center-distance变为一维变量，方便后续计算
+        center_distance = torch.sum(torch.pow(box_1_xy - box_2_xy, 2), dim = -1) #此处指定最后一维为计算对象，center-distance的张量形状与iou一致
 
         # 计算包裹真实框和预测框的最小包络框,求取包络框的左上角和右下角
         enclose_mins   = torch.min(box_1_mins, box_2_mins)
@@ -80,20 +81,36 @@ class YoloLoss(nn.Module):
         # 求包络框的对角线距离
         enclose_diagonal = torch.sum(torch.pow(enclose_wh, 2), dim = -1)
 
-        # 将中心线比例引入交并比iou
+        # 将中心线比例引入交并比iou，center_distance越小,ciou越大
+        # 其中利用包络框的对角线距离对center_distance进行归一化操作
+        # （注：也可以用其中固定值进行归一化，感觉用enclose_diagonal进行归一化，可以‘减缓’center_distance参数对ciou的影响，因为center_distance和enclose_diagonal是同向变化的）
         ciou = iou - 1.0 * (center_distance) / torch.clamp(enclose_diagonal, 1e-6)
 
         # 将真实框和预测框的宽长比引入交并比，从而体现两个框的形状重合特性
         box_wh_ratio = (4 / (math.pi ** 2)) * torch.pow((torch.atan(box_1_wh[..., 0] / torch.clamp(box_1_wh[..., 1], 1e-6)) - torch.atan(box_2_wh[..., 0] / torch.clamp(box_2_wh[..., 1], 1e-6))), 2)
+        # 系数alpha用于调整宽高比损失项的权重，当iou减小时，alpha增大，代表增大权重，使得ciou快速降低，因为若无重合，即使形状相似也无用
+        # alpha是关于box_wh_ratio的增函数，此处为归一化操作
         alpha = box_wh_ratio / torch.clamp((1.0 - iou +box_wh_ratio), 1e-6)
         ciou = ciou - alpha * box_wh_ratio
         return ciou
+    def box_iou(self, box_a, box_b):
+        """
+        函数定义：计算一张图片上的所有真实框和先验框的IoU
+        输入为：
+         ----------
+        box_a: tensor, shape=(gt_num, 4), xywh
+        box_b: tensor, shape=(anchor_num, 4), xywh
+
+        返回为：
+        -------
+        iou: tensor, shape=(gt_num, anchor_num, 1)
+        """
     
     def smooth_labels(self, y_ture, label_smoothing, num_classes):
 
     def forward(self, l, input, targets = None):
 
-    def calculate_ciou(self, _box_a, _box_b):
+
 
     def get_target(self, l, target, anchors, in_h, in_w):
 
