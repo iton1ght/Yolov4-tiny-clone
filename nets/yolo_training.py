@@ -41,12 +41,12 @@ class YoloLoss(nn.Module):
         函数定义：计算真实框张量和预测框张量的所有CIoU
         输入为：
         ----------
-        box_1: tensor, shape=(batch, feat_w, feat_h, anchor_num, 4), xywh
-        box_2: tensor, shape=(batch, feat_w, feat_h, anchor_num, 4), xywh
+        box_1: tensor, shape=(batch, anchor_num, feat_w, feat_h, 4), xywh
+        box_2: tensor, shape=(batch, anchor_num, feat_w, feat_h, 4), xywh
 
         返回为：
         -------
-        ciou: tensor, shape=(batch, feat_w, feat_h, anchor_num, 1)
+        ciou: tensor, shape=(batch, anchor_num, feat_w, feat_h, 1)
         """
         # 求真实框左上角和右下角坐标
         box_1_xy   = box_1[..., :2]
@@ -84,7 +84,7 @@ class YoloLoss(nn.Module):
         # 将中心线比例引入交并比iou，center_distance越小,ciou越大
         # 其中利用包络框的对角线距离对center_distance进行归一化操作
         # （注：也可以用其中固定值进行归一化，感觉用enclose_diagonal进行归一化，可以‘减缓’center_distance参数对ciou的影响，因为center_distance和enclose_diagonal是同向变化的）
-        ciou = iou - 1.0 * (center_distance) / torch.clamp(enclose_diagonal, 1e-6)
+        ciou = iou - 1.0 * center_distance / torch.clamp(enclose_diagonal, 1e-6)
 
         # 将真实框和预测框的宽长比引入交并比，从而体现两个框的形状重合特性
         box_wh_ratio = (4 / (math.pi ** 2)) * torch.pow((torch.atan(box_1_wh[..., 0] / torch.clamp(box_1_wh[..., 1], 1e-6)) - torch.atan(box_2_wh[..., 0] / torch.clamp(box_2_wh[..., 1], 1e-6))), 2)
@@ -144,11 +144,11 @@ class YoloLoss(nn.Module):
         """
         return y_ture * (1- label_smoothing) + label_smoothing / num_classes
     #定义方法，计算y_true，noobj_mask, box_loss_scale
-    def get_target(self, l, target, scale_anchors, in_h, in_w):
+    def get_target(self, l, targets, scale_anchors, in_h, in_w):
         """
         函数定义: 待填充
         :param l: l代表特征图序号，即选择第l个特征图
-        :param target: 代表真实框数据标签，包括批次，真实框数量，以及真实框坐标和类别信息，shape=[bs, gt_num, 5], 5->xywhc
+        :param targets: 代表真实框数据标签，包括批次，真实框数量，以及真实框坐标和类别信息，shape=[bs, gt_num, 5], 5->xywhc
         :param scale_anchors: 在特征图尺度上的先验框列表, 即原anchors进行缩放
         :param in_h: 特征图高度
         :param in_w: 特征图宽度
@@ -159,7 +159,7 @@ class YoloLoss(nn.Module):
         box_loss_scale:用于调整不同大小的物体在损失函数中的权重，特别是用于让网络更加关注小目标。小目标在特征图中通常只占据少量像素，因此可能需要额外的权重来确保它们得到足够的关注。
         """
         # 获取批次大小
-        bs = target.size(0)
+        bs = targets.size(0)
         # 获取该特征图下的先验框数量
         anchors_num = len(self.anchors_mask[l])
         # 创建一个张量，标记哪些先验框不包含物体，初始化时全都不包含，即张量元素均为1
@@ -171,15 +171,15 @@ class YoloLoss(nn.Module):
 
         # 对批次内每张图片的每个真实框与预设所有先验框进行交并比计算，从而选出最大交并比的先验框，作为该真实框的最初尺寸分类
         for b in range(bs):
-            if target[b].size(0)==0:
+            if targets[b].size(0)==0:
                 continue
-            batch_target = torch.zeros_like(target[b])
+            batch_target = torch.zeros_like(targets[b])
             # 计算出原图中正样本在特征图上的中心点和宽高
             # 这里的target中的xywh可能为归一化坐标，故乘以特征图尺寸还原到特征图的像素坐标,因为后续先验框的尺寸为像素坐标，故两者统一
-            batch_target[:, [0, 2]] = target[b][:, [0, 2]] * in_w
-            batch_target[:, [1, 3]] = target[b][:, [1, 3]] * in_h
+            batch_target[:, [0, 2]] = targets[b][:, [0, 2]] * in_w
+            batch_target[:, [1, 3]] = targets[b][:, [1, 3]] * in_h
             # 提取真实框的类别序号
-            batch_target[:, 4] = target[b][:, 4]
+            batch_target[:, 4] = targets[b][:, 4]
 
             # 将真实框张量转换形式，中心坐标归0（先验框无中心坐标，所以两者都取0），即移至坐标原点,方便后续计算交并比,代入到box_iou进行计算
             # 真实框张量, shape = [gt_num, 4]
@@ -259,10 +259,12 @@ class YoloLoss(nn.Module):
             int(bs*len(self.anchors_mask[l])), 1, 1).view(x.shape).type_as(x)
         grid_y = torch.linspace(0, in_h-1, in_h).repeat(in_w, 1).t().repeat(
             int(bs*len(self.anchors_mask[l])), 1, 1).view(y.shape).type_as(x)
+
         # 生成先验框的在特征图尺度下的宽高，并转化为与输出相同的张量形状
         scaled_anchors_l = np.array(scaled_anchors)[self.anchors_mask[l]] #scaled_anchors为元组列表，先转化为二维数组，并取出当前l掩码的宽高，一行代表一组宽高
         anchor_w = torch.Tensor(scaled_anchors_l).index_select(1, torch.LongTensor([0])).type_as(x)
         anchor_h = torch.Tensor(scaled_anchors_l).index_select(1, torch.LongTensor([1])).type_as(x)
+
         # 转换张量形状，用于后续计算
         anchor_w = anchor_w.repeat(bs, 1).repeat(1, 1, in_h, in_w).view(w.shapes)
         anchor_h = anchor_h.repeat(bs, 1).repeat(1, 1, in_h, in_w).view(h.shapes)
@@ -298,8 +300,96 @@ class YoloLoss(nn.Module):
             noobj_mask[b][max_iou > self.ignore_threshord] = 0
 
         return pred_boxes, noobj_mask
-    def forward(self, l,  input, targets=None):
+    def forward(self, l, input, targets=None):
+        """
 
+        :param l: 第几个特征图序号
+        :param input: 特征图输入，yolov4-tiny有两个特征图
+                      l=0时，shape = [bs, 3*(5+classes_num), 13, 13]
+                      l=1时，shape = [bs, 3*(5+classes_num), 26, 26]
+        :param targets: 真实图输入，即真实标签输入情况
+                      shape = [bs, gt_num, 5]
+        :return:
+        loss: 输出损失值
+        """
+        # 获得批次大小，特征图宽和高的大小
+        bs   = input.size(0)
+        in_w = input.size(2)
+        in_h = input.size(3)
+
+        # 计算步长
+        # 每一个特征点对应原来的图片上多少个像素点
+        # 如果特征层为13x13的话，一个特征点就对应原来的图片上的32个像素点
+        # 如果特征层为26x26的话，一个特征点就对应原来的图片上的16个像素点
+        # stride_h = stride_w = 32、16
+        stride_w = self.input_shape[0] / in_w
+        stride_h = self.input_shape[1] / in_h
+
+        # 计算scale_anchors，这个是相对特征图的先验框尺寸
+        scale_anchors =[(anchor_w / stride_w, anchor_h / stride_h) for anchor_w, anchor_h in self.anchors]
+
+        # 将输入的input张量进行转换，input张量一共有两个，对应两个特征图。将四维张量转换为五维。
+        # shape: [bs, 3*(5+classes_num), 13, 13] -> [bs, 3, 13, 13, 5+classes_num]
+        # shape: [bs, 3*(5+classes_num), 26, 26] -> [bs, 3, 26, 26, 5+classes_num]
+        prediction = input.view(bs, len(self.anchors_mask[l]), self.bbox_attrs, in_h, in_w).permute(0, 1, 3, 4, 2).contiguous()
+
+        # 先验框的中心调整参数，利用sigmoid函数将其映射至0-1之间，使其不会超出一个网格。后面再加上网格坐标，则得到预测框中心
+        x = torch.sigmoid(prediction[..., 0])
+        y = torch.sigmoid(prediction[..., 1])
+
+        # 先验框的宽高调整参数
+        w = prediction[..., 2]
+        h = prediction[..., 3]
+
+        #由先验框得到的预测框的位置置信度
+        conf = torch.sigmoid(prediction[..., 4])
+
+        #由先验框得到的预测框的种类置信度
+        pred_cls = torch.sigmoid(prediction[..., 5:])
+
+        # 获得网络应该得到的真实的预测结果，即目标值，y_true为真实框张量
+        y_true, noobj_mask, box_loss_scale = self.get_target(l, targets, scale_anchors, in_h, in_w)
+
+        # 将预测结果进行解码，获得网络根据先验框和计算结果得到的预测框, pred-boxes为预测框张量
+        # 判断预测结果和真实值的重合程度，如果重合程度过大则忽略，因为这些特征点属于预测比较准确的特征点，作为负样本不合适
+        pred_boxes, noobj_mask = self.get_ignore(l, x, y, h, w, targets, scale_anchors, in_h, in_w, noobj_mask)
+
+        if self.cuda:
+            y_true          = y_true.type_as(x)
+            noobj_mask      = noobj_mask.type_as(x)
+            box_loss_scale  = box_loss_scale.type_as(x)
+        #--------------------------------------------------------------------------#
+        #   box_loss_scale是真实框宽高的乘积，宽高均在0-1之间，因此乘积也在0-1之间。
+        #   2-宽高的乘积代表真实框越大，比重越小，小框的比重更大。
+        #   使用iou损失时，大中小目标的回归损失不存在比例失衡问题，故弃用
+        #--------------------------------------------------------------------------#
+        box_loss_scale = 2 - box_loss_scale
+
+        # 计算损失
+        loss = 0
+        # 生成布尔掩码，真实框上为正样本，即相应位置置信度为1，即有目标的位置为True，其余不参与损失计算
+        obj_mask = y_true[..., 4] == 1
+        n = torch.sum(obj_mask)
+        if n != 0:
+            # 计算所有真实框和所有预测框的ciou
+            ciou = self.box_ciou(y_true[..., :4], pred_boxes).type_as(x)
+            # 计算回归损失，即定位回归损失值
+            # 通过使用布尔索引，我们只选择那些 obj_mask 为 True 的位置上的 (1 - ciou) 值。这确保了只有正样本的预测框对损失有贡献。
+            loss_loc = torch.mean((1 - ciou)[obj_mask])
+            # 同理使用布尔索引，利用二元交叉熵损失函数计算分类损失
+            loss_cls = torch.mean(self.BSELoss(pred_cls[obj_mask], y_true[..., 5:][obj_mask]))
+            # 合并损失，引入权重
+            loss += loss_loc * self.box_ratio + loss_cls * self.cls_ratio
+        # 引入置信度损失
+        # conf 与 obj_mask进行交叉熵损失计算，这计算了每个预测框的置信度损失。
+        # 注意，这里实际上是将置信度预测与 obj_mask 作为目标值进行比较，这在YOLO中是一个常见的做法，因为YOLO将置信度解释为预测框内存在目标的概率。
+        # noobj_mask用于标识哪些预测框没有与任何真实目标匹配（即负样本），由于在get_target和get_ignore函数中，对noobj_mask已更新，对部分位置不参与计算的预测框已经置0
+        # noobj_mask为元素为0或1，noobj_mask.bool()将0转换为False，1转换为True
+        # [noobj_mask.bool() | obj_mask]，这个逻辑或运算的结果是一个新的布尔数组，其中每个元素都是 noobj_mask 和 obj_mask 对应位置元素逻辑或的结果，形成新的布尔掩码
+        # 因此置信度计算既考虑了正样本，也考虑负样本
+        loss_conf = torch.mean(self.BSELoss(conf, obj_mask.type_as(conf))[noobj_mask.bool() | obj_mask] )
+        loss += loss_conf * self.balance[l] * self.obj_ratio
+        return loss
 def weight_init():
 
 def get_lr_scheduler():
