@@ -146,10 +146,10 @@ class YoloLoss(nn.Module):
     #定义方法，计算y_true，noobj_mask, box_loss_scale
     def get_target(self, l, target, scale_anchors, in_h, in_w):
         """
-        函数定义:
+        函数定义: 待填充
         :param l: l代表特征图序号，即选择第l个特征图
         :param target: 代表真实框数据标签，包括批次，真实框数量，以及真实框坐标和类别信息，shape=[bs, gt_num, 5], 5->xywhc
-        :param anchors: 代表先验框列表
+        :param scale_anchors: 在特征图尺度上的先验框列表, 即原anchors进行缩放
         :param in_h: 特征图高度
         :param in_w: 特征图宽度
 
@@ -197,7 +197,7 @@ class YoloLoss(nn.Module):
             # 检查最重合先验框的序号是否在先验框掩码里
             def check_in_anchors_mask(index, anchors_mask):
                 for sub_anchors_mask in anchors_mask:
-                    if best_ns in sub_anchors_mask:
+                    if index in sub_anchors_mask:
                         return True
                 return False
             for t, best_n in enumerate(best_ns):
@@ -236,7 +236,69 @@ class YoloLoss(nn.Module):
                 box_loss_scale = 2-batch_target[t, 2] * batch_target[t, 3] / in_h / in_w
         return y_true, noobj_mask, box_loss_scale
     def get_ignore(self, l, x, y, h, w, targets, scaled_anchors, in_h, in_w, noobj_mask):
-    def forward(self, l, input, targets=None):
+        """
+        函数定义：在当前特征图l下，根据先验框以及模型输出值，求得预测框张量，并将每个预测框与真实框求交并比，将最大交并比的预测框（先验框）设为大概率有目标，故noobj_mask掩码对应位置置0，后续不参与损失计算
+        :param l: l代表特征图序号，即选择第l个特征图
+        :param x: 经过神经网络计算输出x，x代表先验框的调整量，从而得到预测框x
+        :param y: 同x
+        :param h: 同x，注意宽高调整量不能直接相加，因为已经经过对数处理，还原的话要在经指数处理
+        :param w: 同h
+        :param targets: 代表真实框数据标签，包括批次，真实框数量，以及真实框坐标和类别信息，shape=[bs, gt_num, 5], 5->xywhc
+        :param scaled_anchors: 在特征图尺度上的先验框列表, 即原anchors进行缩放
+        :param in_h: 特征图高度
+        :param in_w: 特征图宽度
+        :param noobj_mask: 无目标掩码
+        :return:
+        pred_boxes: 预测框张量，shape=[bs, len(anchors_mask[l]), in_h, in_w, 4]
+        noobj_mask: 无目标掩码
+        """
+        # 获得批次大小
+        bs = targets.size(0)
+        # 生成网格，网格的左上角坐标即为先验框的中心
+        grid_x = torch.linspace(0, in_w-1, in_w).repeat(in_h, 1).repeat(
+            int(bs*len(self.anchors_mask[l])), 1, 1).view(x.shape).type_as(x)
+        grid_y = torch.linspace(0, in_h-1, in_h).repeat(in_w, 1).t().repeat(
+            int(bs*len(self.anchors_mask[l])), 1, 1).view(y.shape).type_as(x)
+        # 生成先验框的在特征图尺度下的宽高，并转化为与输出相同的张量形状
+        scaled_anchors_l = np.array(scaled_anchors)[self.anchors_mask[l]] #scaled_anchors为元组列表，先转化为二维数组，并取出当前l掩码的宽高，一行代表一组宽高
+        anchor_w = torch.Tensor(scaled_anchors_l).index_select(1, torch.LongTensor([0])).type_as(x)
+        anchor_h = torch.Tensor(scaled_anchors_l).index_select(1, torch.LongTensor([1])).type_as(x)
+        # 转换张量形状，用于后续计算
+        anchor_w = anchor_w.repeat(bs, 1).repeat(1, 1, in_h, in_w).view(w.shapes)
+        anchor_h = anchor_h.repeat(bs, 1).repeat(1, 1, in_h, in_w).view(h.shapes)
+
+        # 计算调整之后的先验框的中心和宽高，也就是预测框的中心和宽高
+        pred_boxes_x = torch.unsqueeze(grid_x + x, -1)
+        pred_boxes_y = torch.unsqueeze(grid_y + y, -1)
+        pred_boxes_w = torch.unsqueeze(torch.exp(w) + anchor_w, -1)
+        pred_boxes_h = torch.unsqueeze(torch.exp(h) + anchor_h, -1)
+        pred_boxes = torch.cat([pred_boxes_x, pred_boxes_y, pred_boxes_h, pred_boxes_w], -1)
+
+        # 求得更新后的noobj_mask
+        for b in range(bs):
+            # 将第b批次的预测框张量转换形式，[len(anchors_mask[l]), in_h, in_w, 4] ->[anchors_sum_num, 4]
+            pred_boxes_for_ignore = pred_boxes[b].view(-1, 4) #B=len(anchors_mask[l])*in_h*in_w
+
+            # 计算真实框张量，并转换为特征图尺度大小，shape=[gt_num, 4], A=4
+            batch_target = torch.zeros_like(targets[b])
+            batch_target[:, [0, 2]] = targets[b][:, [0, 2]] * in_w
+            batch_target[:, [1, 3]] = targets[b][:, [1, 3]] * in_h
+            batch_target[:, :4] = batch_target[:, :4].type_as(x)
+
+            # 计算所有预测框和所有真实框的交并比
+            # 对于每一个预测框，求取最大交并比的真实框iou数值
+            iou = self.box_iou(batch_target, pred_boxes_for_ignore) # iou shape=[A, B]
+            max_iou, _ = torch.max(iou, dim=0) #max_iou为一维张量，大小为B
+            # 将张量max_iou再转换为与第b批次的pred_boxes相同的形状
+            max_iou = max_iou.view(pred_boxes[b].size()[:3]) # B -> [len(anchors_mask[l]), in_h, in_w]
+
+            # 将max_iou的值与预设的ignore_threshord比较，大于预设交并比时为ture，形成一个布尔掩码。
+            # 利用布尔掩码对noobj_mask对应位置进行操作，如果为真则置0
+            # 该操作将预测框交并比较大的不予进入损失计算
+            noobj_mask[b][max_iou > self.ignore_threshord] = 0
+
+        return pred_boxes, noobj_mask
+    def forward(self, l,  input, targets=None):
 
 def weight_init():
 
