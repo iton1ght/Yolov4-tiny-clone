@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 class YoloLoss(nn.Module):
-    def __init__(self, anchors, num_classes, input_shape, cuda, anchors_mask=[[6, 7, 8], [3, 4, 5], [0, 1, 2]], label_smoothing=0):
+    def __init__(self, anchors, num_classes, input_shape, cuda, anchors_mask=[[6, 7, 8], [3, 4, 5], [0, 1, 2]], label_smoothing=0) -> object:
         super().__init__()
         self.anchors = anchors
         self.num_classes = num_classes

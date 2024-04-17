@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from nets.CSPdarknet53_tiny import cspdarknet53_tiny
+from nets.CSPdarknet53_tiny import darknet53_tiny
 
 # yolo主体结构包括Backbone主干和其他（头部和上采样等）
 # Backbone主干主要由三个Resblock_body组成
@@ -16,6 +16,7 @@ class BasicConv(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, kernel_size//2, bias=False)
         self.bn = nn.BatchNorm2d(out_channels)
         self.activation = nn.LeakyReLU(0.1)
+
     def forward(self, x):
         x = self.conv(x)
         x = self.bn(x)

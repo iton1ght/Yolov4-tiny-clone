@@ -100,6 +100,7 @@ class CSPDarkNet(nn.Module):
 
 def darknet53_tiny(pretrained,**kwargs):
     model = CSPDarkNet()
+    # 如果pretrained为TRUE,则加载主干的预训练权重。若已经全模型加载了预训练权重，则pretrained的值无所谓，主干部分权重已经在全模型预训练权重中被加载了
     if pretrained:
         model.load_state_dict(torch.load("model_data/CSPdarknet53_tiny_backbone_weights.pth"))
     return model
