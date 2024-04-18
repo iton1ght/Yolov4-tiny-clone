@@ -1,12 +1,20 @@
 import datetime
+import os
+from functools import partial
 
 import numpy as np
-import torch.cuda
+import torch
+import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+import torch.optim as optim
+import torch.nn as nn
+from torch.utils.data import DataLoader
 
 from nets.net_yolo import YoloBody
 from nets.net_loss import (YoloLoss, get_lr_scheduler, weight_init, set_optimizer_lr)
 
-from utils.utils import (get_classes, get_anchors)
+from utils.utils import (get_classes, get_anchors,show_config)
+from utils.callbacks import (LossHistory)
 
 if __name__ == "__main__":
     # 是否使用Cuda, 若无GPU可以设置成False
@@ -274,4 +282,136 @@ if __name__ == "__main__":
     if local_rank ==0
         time_str = datetime.datetime.strftime(datetime.datetime.now(), '%Y_%m_%d_%H_%M_%S')
         log_dir = os.path.join(save_dir, "loss_" + str(time_str))
-        loss_history = LossHistory()
+        loss_history = LossHistory(log_dir, model, input_shape)
+    else:
+        loss_history = None
+
+    if fp16:
+        from torch.cuda.amp import GradScaler as GradScaler
+        scaler = GradScaler()
+    else:
+        scale = None
+
+    model_train = model.train()
+
+    # ----------------------------#
+    #   多卡同步Bn
+    # ----------------------------#
+    if sync_bn and ngpus_per_node > 1 and distributed:
+        model_train = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_train)
+    elif sync_bn:
+        print("Sync_bn is not support in one gpu or not distributed.")
+
+    if Cuda:
+        if distributed:
+            # ----------------------------#
+            #   多卡平行运行
+            # ----------------------------#
+            model_train = model_train.cuda(load_rank)
+            model_train = torch.nn.parallel.DistributedDataParallel(model_train, device_ids=[local_rank], find_unused_parameters=True)
+        else:
+            model_train = torch.nn.DataParallel(model)
+            cudnn.benchmark = True
+            model_train = model_train.cuda()
+
+    # ----------------------------#
+    # 读取数据集对应的txt
+    # ----------------------------#
+    with open(train_annotation_path, encoding='utf-8') as f:
+        train_lines = f.readlines()
+    with open(val_annotation_path, encoding='utf-8') as f:
+        val_lines = f.readlines()
+    num_train = len(train_lines)
+    num_val = len(val_lines)
+
+    if local_rank == 0:
+        show_config(
+            classes_path=classes_path, anchors_path=anchors_path, anchors_mask=anchors_mask, model_path=model_path, input_shape=input_shape, \
+            Init_Epoch=Init_Epoch, Freeze_Epoch=Freeze_Epoch, UnFreeze_Epoch=UnFreeze_Epoch, Freeze_batch_size=Freeze_batch_size, UnFreeze_batch_size=UnFreeze_batch_size, Freeze_Train=Freeze_Train, \
+            Init_lr=Init_lr, Min_lr=Min_lr, optimizer_type=optimizer_type, momentum=momentum, lr_decay_type=lr_decay_type, \
+            save_period=save_period, save_dir=save_dir, num_workers=num_workers, num_train=num_train, num_val=num_val
+        )
+        # -----------------------------------------------#
+        # 总训练世代指的是遍历全部数据的总次数
+        # 总训练步长指的是梯度下降的总次数
+        # 每个训练世代包含若干训练步长，每个训练步长进行一次梯度下降
+        # 此处仅建议最低训练世代，上不封顶，计算时只考虑了解冻部分
+        # -----------------------------------------------#
+        wanted_step = 5e4 if optimizer_type == "sgd" else 1.5e4
+        total_step = num_train // UnFreeze_batch_size * UnFreeze_Epoch
+        if total_step <= wanted_step:
+            if num_train // UnFreeze_batch_size == 0:
+                raise ValueError('数据集过小，无法进行训练，请扩充数据集')
+            wanted_epoch = wanted_step // (num_train // UnFreeze_batch_size)
+            print("\n\033[1;33;44m[Warning] 使用%s优化器时，建议将训练总步长设置到%d以上。\033[0m" % (optimizer_type, wanted_step))
+            print("\033[1;33;44m[Warning] 本次运行的总训练数据量为%d，Unfreeze_batch_size为%d，共训练%d个Epoch，计算出总训练步长为%d。\033[0m" % (num_train, Unfreeze_batch_size, UnFreeze_Epoch, total_step))
+            print("\033[1;33;44m[Warning] 由于总训练步长为%d，小于建议总步长%d，建议设置总世代为%d。\033[0m" % (total_step, wanted_step, wanted_epoch))
+
+    # ----------------------------------------------#
+    # 主干特征提取网络特征通用，训练所得的权重因此可以复用到其他训练，采用冻结训练可以加快训练速度，也可以在训练初期防止权值被破坏
+    # Init_Epoch为初始世代
+    # Freeze_Epoch为冻结训练的世代
+    # UnFreeze_Epoch总训练世代
+    # 提示00M或者显存不足请调小Batch_size
+    # ---------------------------------------------#
+
+    if True:
+        UnFreeze_flag = False
+        # 冻结一定部分训练
+        if Freeze_Train:
+            for param in model.backbone.parameters():
+                param.requires_grad = False
+        # 如果不冻结训练的话，直接设置Batch_size = UnFreeze_Bathc_size
+        batch_size = Freeze_batch_size if Freeze_Train else UnFreeze_batch_size
+        # -----------------------------------------#
+        # 判断当前的batch_size，自适应调整学习率
+        # -----------------------------------------#
+        nbs = 64
+        lr_limit_max = 1e-3 if optimizer_type == "adam" else 5e-2
+        lr_limit_min = 3e-4 if optimizer_type == "adam" else 5e-4
+        Init_lr_fit = min(max(batch_size / nbs * Init_lr, lr_limit_min), lr_limit_max)
+        Min_lr_fit  = min(max(batch_size / nbs * Min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
+
+        # 根据optimizer_type选择优化器
+        # 这段代码的目的是将模型的参数按照不同的类型和需求进行分组，并为每个组设置不同的优化策略。例如，pg0
+        # 可能包含所有批归一化层的权重，pg1包含其他层的权重，而pg2包含所有层的偏置项。
+        # model.named_modules()是一个函数，它返回模型中所有模块的迭代器，其中k 是模块的名称，v` 是模块本身。
+        # ----------------------------------------------------------#
+        # hasattr() 函数用于检查一个对象是否有一个指定的属性。其基本语法如下：
+        # hasattr(object, name)
+        # object：一个对象。
+        # name：一个字符串，表示属性名。
+        # 如果对象有该属性，则返回 True，否则返回 False。
+        # ----------------------------------------------------------#
+        # isinstance() 函数用于检查一个对象是否是一个已知的类型。其基本语法如下：
+        # isinstance(object, classinfo)
+        # object：一个对象。
+        # classinfo：可以是直接或间接类名、基本类型或者由它们组成的元组。
+        # 如果对象的类型与参数 classinfo 相同或直接是其子类，则返回 True，否则返回 False。
+        pg0, pg1, pg2 = [], [], []
+        for v, k in model.named_modules():
+            if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):
+                pg2.append(v.bias)
+            if isinstance(v, nn.BatchNorm2d) or 'bn' in k:
+                pg0.append(v.weight)
+            elif hasattr(v, 'weight') and isinstance(v.weight, nn.Parameter):
+                pg1.append(v.weight)
+            optimizer = {
+                'adam' :optim.Adam(pg0, Init_lr_fit, betas=(momentum, 0.999)),
+                'sgd'  :optim.SGD(pg0, Init_lr_fit, momentum=momentum, nesterov=True)
+            }[optimizer_type]
+            optimizer.add_param_group({'params': pg1, 'weight_decay': weight_decay})
+            optimizer.add_param_group({'params': pg2})
+
+        # -------------------------#
+        # 获得学习率下降的公式
+        # -------------------------#
+        lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, UnFreeze_Epoch)
+
+        # ------------------------#
+        # 判断每一个世代的长度
+        # ------------------------#
+        epoch_step = num_train // batch_size
+        epoch_step_val = num_val // batch_size
+        if epoch_step == 0 or epoch_step_val == 0:
+            raise ValueError("数据集过小，无法继续进行训练，请扩充数据集。")

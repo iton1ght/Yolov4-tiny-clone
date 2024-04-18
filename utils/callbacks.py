@@ -4,7 +4,8 @@ import torch
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-import scipy.signal
+
+from scipy.signal import savgol_filter
 
 from torch.utils.tensorboard import SummaryWriter
 

@@ -21,3 +21,16 @@ def get_anchors(anchors_path):
     anchors = [float(x) for x in anchors.split(',')]
     anchors = np.array(anchors).reshape(-1, 2)
     return anchors, len(anchors)
+
+
+# ---------------------------------------#
+# 打印出训练参数
+# ---------------------------------------#
+def show_config(**kwargs):
+    print('Configurations:')
+    print('-'*70)
+    print('|%25s | %40s|' % ('keys', 'values'))
+    print('-'*70)
+    for key, value in kwargs.items():
+        print('|%25s | %40s|' % (str(key), str(value)))
+    print(('-'*70))
