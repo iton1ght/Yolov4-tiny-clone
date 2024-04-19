@@ -15,6 +15,7 @@ from nets.net_loss import (YoloLoss, get_lr_scheduler, weight_init, set_optimize
 
 from utils.utils import (get_classes, get_anchors,show_config)
 from utils.callbacks import (LossHistory)
+from utils.dataloader import (YoloDataset)
 
 if __name__ == "__main__":
     # 是否使用Cuda, 若无GPU可以设置成False
@@ -415,3 +416,47 @@ if __name__ == "__main__":
         epoch_step_val = num_val // batch_size
         if epoch_step == 0 or epoch_step_val == 0:
             raise ValueError("数据集过小，无法继续进行训练，请扩充数据集。")
+
+        # -------------------------#
+        # 构建数据集加载器
+        # -------------------------#
+        train_dataset = YoloDataset(train_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch, \
+                                    mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob, traint=True, special_aug_ratio=special_aug_ration)
+        val_dataset   = YoloDataset(val_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch, \
+                                    mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob, traint=False, special_aug_ratio=0)
+        # -------------------------------------#
+        # 设置数据采样器（sampler）的，在分布式训练和非分布式训练的情况下有所不同
+        # -------------------------------------#
+        if distributed:
+            train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True,)
+            val_sampler   = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False,)
+            batch_size    = batch_size // ngpus_per_node
+            shuffle       = False
+        else:
+            train_sampler = False
+            val_sample    = False
+            shuffle       = True
+
+        gen = DataLoader(train_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True, \
+                         drop_last=True, collate_fn=yolo_dataset_collate, sampler=train_sampler, \
+                         worker_init_fn=partial(worker_init_fn, rank=rank, seed=seed))
+        gen_val = DataLoader(val_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True, \
+                         drop_last=True, collate_fn=yolo_dataset_collate, sampler=val_sampler, \
+                         worker_init_fn=partial(worker_init_fn, rank=rank, seed=seed))
+
+        # ----------------------------------#
+        # 记录eval的map曲线
+        # ----------------------------------#
+        if local_rank == 0:
+            eval_callback = EvalCallback(model, input_shape, anchors, anchors_mask, class_names, num_classes, val_lines, log_dir, Cuda, \
+                                         eval_flag=eval_flag, period=eval_period)
+        else:
+            eval_callback = None
+
+        # ----------------------------------#
+        # 开始模型训练
+        # ----------------------------------#
+        for epoch in range(Init_Epoch, UnFreeze_Epoch):
+
+        if local_rank == 0:
+            loss_history.writer.close()
