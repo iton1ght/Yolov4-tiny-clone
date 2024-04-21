@@ -24,10 +24,10 @@ class Resblock_body(nn.Module):
         self.in_channels  = in_channels
         self.out_channels = out_channels
         # 卷积层
-        self.convbnleaky_1 = BasicConv(self.in_channels, self.in_channels, 3)
-        self.convbnleaky_2 = BasicConv(self.in_channels//2, self.in_channels//2, 3)
-        self.convbnleaky_3 = BasicConv(self.in_channels//2, self.in_channels//2, 3)
-        self.convbnleaky_4 = BasicConv(self.out_channels//2, self.out_channels//2, 1)
+        self.conv1 = BasicConv(self.in_channels, self.in_channels, 3)
+        self.conv2 = BasicConv(self.in_channels//2, self.in_channels//2, 3)
+        self.conv3 = BasicConv(self.in_channels//2, self.in_channels//2, 3)
+        self.conv4 = BasicConv(self.out_channels//2, self.out_channels//2, 1)
 
         # 二维最大池化层
         self.maxpool = nn.MaxPool2d([2,2], [2,2])
@@ -69,11 +69,11 @@ class CSPDarkNet(nn.Module):
         self.conv2 = BasicConv(32, 64,3 ,2)
         # 三个resblock_body模块
         # 104x104x64 -> 52x52x128
-        self.resblockbody_1 = Resblock_body(64,128)
+        self.resblock_body1 = Resblock_body(64, 128)
         # 52x52x128 -> 26x26x256
-        self.resblockbody_2 = Resblock_body(128,256)
+        self.resblock_body2 = Resblock_body(128, 256)
         # 26x26x256 -> 13x13x512
-        self.resblockbody_3 = Resblock_body(256,512)
+        self.resblock_body3 = Resblock_body(256, 512)
         # 一个标准化卷积模块
         # 第三个卷积3x3，13x13x512 -> 13x13x512
         self.conv3 = BasicConv(512,512,3,1)

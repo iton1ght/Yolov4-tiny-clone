@@ -25,13 +25,13 @@ class BasicConv(nn.Module):
 
 # 定义上采样模块
 class Upsample(nn.Module):
-    def __int__(self, in_channels, out_channels):
-        super().__int__()
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
         self.upsample = nn.Sequential(
             BasicConv(in_channels, out_channels, kernel_size=1),
             nn.Upsample(scale_factor=2, mode='nearest')
         )
-    def forward(self, x):
+    def forward(self, x,):
         x = self.upsample(x)
         return x
 
@@ -52,21 +52,21 @@ class YoloBody(nn.Module):
         self.backbone = darknet53_tiny(pretrained)
 
         self.conv_for_P5  = BasicConv(512, 256, 1, 1)
-        self.yolo_head_P5 = yolo_head([512, len(anchor_mask[0])*(5+num_classes)], 256)
+        self.yolo_headP5 = yolo_head([512, len(anchor_mask[0])*(5+num_classes)], 256)
 
         self.upsample     = Upsample(256, 128)
-        self.yolo_head_P4 = yolo_head([256, len(anchor_mask[1])*(5+num_classes)], 384)
+        self.yolo_headP4 = yolo_head([256, len(anchor_mask[1])*(5+num_classes)], 384)
 
     def forward(self,x):
 
-        feat1,feat2 = self.backbone(x)
+        feat1, feat2 = self.backbone(x)
 
         P5   = self.conv_for_P5(feat2)
-        out0 = self.yolo_head_P5(P5)
+        out0 = self.yolo_headP5(P5)
 
         P5_Upsample = self.upsample(P5)
-        P4   = torch.cat([P5_Upsample,feat1], 1)
-        out1 = self.yolo_head_P4(P4)
+        P4   = torch.cat([P5_Upsample, feat1], 1)
+        out1 = self.yolo_headP4(P4)
 
         return out0, out1
 

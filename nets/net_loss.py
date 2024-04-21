@@ -330,8 +330,8 @@ class YoloLoss(nn.Module):
         # 如果特征层为13x13的话，一个特征点就对应原来的图片上的32个像素点
         # 如果特征层为26x26的话，一个特征点就对应原来的图片上的16个像素点
         # stride_h = stride_w = 32、16
-        stride_w = self.input_shape[0] / in_w
-        stride_h = self.input_shape[1] / in_h
+        stride_w = self.input_shape[1] / in_w
+        stride_h = self.input_shape[0] / in_h
 
         # 计算scale_anchors，这个是相对特征图的先验框尺寸
         scale_anchors = [(anchor_w / stride_w, anchor_h / stride_h) for anchor_w, anchor_h in self.anchors]
@@ -401,7 +401,7 @@ class YoloLoss(nn.Module):
 
 
 # 定义函数weight_init(),初始化神经网络的权重
-def weight_init(net, init_type='normal', init_gain=0.02):
+def weights_init(net, init_type='normal', init_gain=0.02):
     """
 
     :param net: 需要初始化的神经网络模型
@@ -431,7 +431,7 @@ def weight_init(net, init_type='normal', init_gain=0.02):
             torch.nn.init.normal_(m.weight.data, 0.0, init_gain)
             torch.nn.init.constant_(m.bias.data, 0.0)
         print('initialize network with %s type' % init_type)
-    net.apply(init_func)
+        net.apply(init_func)
 
 
 def get_lr_scheduler(lr_delay_type, lr, min_lr, total_iters, warmup_iters_ratio=0.05, warmup_lr_ratio=0.1, no_aug_iter_ratio=0.05, step_num=10):

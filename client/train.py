@@ -8,18 +8,20 @@ import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 import torch.optim as optim
 import torch.nn as nn
+from torch import nn
 from torch.utils.data import DataLoader
 
 from nets.net_yolo import YoloBody
-from nets.net_loss import (YoloLoss, get_lr_scheduler, weight_init, set_optimizer_lr)
+from nets.net_loss import (YoloLoss, get_lr_scheduler, weights_init, set_optimizer_lr)
 
-from utils.utils import (get_classes, get_anchors, show_config, seed_everything)
-from utils.callbacks import (LossHistory)
+from utils.utils import (get_classes, get_anchors, show_config, seed_everything, worker_init_fn)
+from utils.utils_fit import fit_one_epoch
+from utils.callbacks import (LossHistory, EvalCallback)
 from utils.dataloader import (YoloDataset, yolo_dataset_collate)
 
 if __name__ == "__main__":
     # 是否使用Cuda, 若无GPU可以设置成False
-    Cuda = True
+    Cuda = False
     # 用于固定随机种子，使得每次独立训练都可以获得一样的结果
     seed = 11
     # ---------------------------------------------------------------------#
@@ -40,11 +42,11 @@ if __name__ == "__main__":
     fp16 = False
     # 指向model_data下的txt，与自己训练的数据集相关
     # 训练前一定要修改classes_path，使其对应自己的数据集
-    classes_path = ''
+    classes_path = '../model_data/voc_classes.txt'
     # anchors_path    代表先验框对应的txt文件，一般不修改。
     # anchors_mask    用于帮助代码找到对应的先验框，一般不修改。
     # YoloV4-Tiny中，鉴于tiny模型对小目标的识别效果一般，官方使用的就是[[3, 4, 5], [1, 2, 3]]，序号为0先验框未被使用到，无需过分纠结。
-    anchors_path = ''
+    anchors_path = '../model_data/yolo_anchors.txt'
     anchors_mask = [[3, 4, 5], [1, 2, 3]]
     # ----------------------------------------------------------------------------------------------------------------------------#
     #   权值文件的下载请看README，可以通过网盘下载。模型的 预训练权重 对不同数据集是通用的，因为特征是通用的。
@@ -66,7 +68,7 @@ if __name__ == "__main__":
     #      可以设置mosaic=True，直接随机初始化参数开始训练，但得到的效果仍然不如有预训练的情况。（像COCO这样的大数据集可以这样做）
     #   2、了解imagenet数据集，首先训练分类模型，获得网络的主干部分权值，分类模型的 主干部分 和该模型通用，基于此进行训练。
     # -------------------------------------
-    model_path = ''
+    model_path = '../model_data/yolov4_tiny_weights_coco.pth'
     # 输入的shape大小，一定要是32的倍数
     input_shape = [416, 416]
     # -------------------------------#
@@ -193,7 +195,7 @@ if __name__ == "__main__":
     # 多少个epoch保存一次权值
     save_period = 10
     # 权值与日志文件保存的文件夹
-    save_dir = 'logs'
+    save_dir = '../logs'
     # ------------------------------------------------------------------#
     #   eval_flag       是否在训练时进行评估，评估对象为验证集
     #                   安装pycocotools库后，评估体验更佳。
@@ -215,8 +217,8 @@ if __name__ == "__main__":
     #   train_annotation_path   训练图片路径和标签
     #   val_annotation_path     验证图片路径和标签
     # ------------------------------------------------------#
-    train_annotation_path = '2007_train.txt'
-    val_annotation_path = '2007_val.txt'
+    train_annotation_path = '../2007_train.txt'
+    val_annotation_path = '../2007_val.txt'
 
     seed_everything(seed)
     # 设置用到的显卡
@@ -241,8 +243,9 @@ if __name__ == "__main__":
     # 创建yolo模型
     # ------------------------------------------------------#
     model = YoloBody(anchors_mask, num_classes, phi=phi, pretrained=pretrained)
+
     if not pretrained:
-        weight_init(model)
+        weights_init(model)
     if model_path != '':
         if local_rank == 0 :
             print('Load weight {}.'.format(model_path))
@@ -280,7 +283,7 @@ if __name__ == "__main__":
     # ---------------------------#
     # 记录Loss
     # ---------------------------#
-    if local_rank ==0:
+    if local_rank == 0:
         time_str = datetime.datetime.strftime(datetime.datetime.now(), '%Y_%m_%d_%H_%M_%S')
         log_dir = os.path.join(save_dir, "loss_" + str(time_str))
         loss_history = LossHistory(log_dir, model, input_shape)
@@ -291,7 +294,7 @@ if __name__ == "__main__":
         from torch.cuda.amp import GradScaler as GradScaler
         scaler = GradScaler()
     else:
-        scale = None
+        scaler = None
 
     model_train = model.train()
 
@@ -326,6 +329,7 @@ if __name__ == "__main__":
     num_val = len(val_lines)
 
     if local_rank == 0:
+        # 显示所有的关键参数
         show_config(
             classes_path=classes_path, anchors_path=anchors_path, anchors_mask=anchors_mask, model_path=model_path, input_shape=input_shape, \
             Init_Epoch=Init_Epoch, Freeze_Epoch=Freeze_Epoch, UnFreeze_Epoch=UnFreeze_Epoch, Freeze_batch_size=Freeze_batch_size, UnFreeze_batch_size=UnFreeze_batch_size, Freeze_Train=Freeze_Train, \
@@ -376,7 +380,7 @@ if __name__ == "__main__":
         # 根据optimizer_type选择优化器
         # 这段代码的目的是将模型的参数按照不同的类型和需求进行分组，并为每个组设置不同的优化策略。例如，pg0
         # 可能包含所有批归一化层的权重，pg1包含其他层的权重，而pg2包含所有层的偏置项。
-        # model.named_modules()是一个函数，它返回模型中所有模块的迭代器，其中k 是模块的名称，v` 是模块本身。
+        # model.named_modules()是一个函数，它返回模型中所有模块的迭代器，其中k是模块的名称，v是模块本身。
         # ----------------------------------------------------------#
         # hasattr() 函数用于检查一个对象是否有一个指定的属性。其基本语法如下：
         # hasattr(object, name)
@@ -390,19 +394,19 @@ if __name__ == "__main__":
         # classinfo：可以是直接或间接类名、基本类型或者由它们组成的元组。
         # 如果对象的类型与参数 classinfo 相同或直接是其子类，则返回 True，否则返回 False。
         pg0, pg1, pg2 = [], [], []
-        for v, k in model.named_modules():
-            if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):
+        for k, v in model.named_modules():
+            if hasattr(v, "bias") and isinstance(v.bias, nn.Parameter):
                 pg2.append(v.bias)
-            if isinstance(v, nn.BatchNorm2d) or 'bn' in k:
+            if isinstance(v, nn.BatchNorm2d) or "bn" in k:
                 pg0.append(v.weight)
-            elif hasattr(v, 'weight') and isinstance(v.weight, nn.Parameter):
+            elif hasattr(v, "weight") and isinstance(v.weight, nn.Parameter):
                 pg1.append(v.weight)
-            optimizer = {
-                'adam' :optim.Adam(pg0, Init_lr_fit, betas=(momentum, 0.999)),
-                'sgd'  :optim.SGD(pg0, Init_lr_fit, momentum=momentum, nesterov=True)
-            }[optimizer_type]
-            optimizer.add_param_group({'params': pg1, 'weight_decay': weight_decay})
-            optimizer.add_param_group({'params': pg2})
+        optimizer = {
+            'adam' : optim.Adam(pg0, Init_lr_fit, betas=(momentum, 0.999)),
+            'sgd'  : optim.SGD(pg0, Init_lr_fit, momentum=momentum, nesterov=True)
+        }[optimizer_type]
+        optimizer.add_param_group({"params": pg1, "weight_decay": weight_decay})
+        optimizer.add_param_group({"params": pg2})
 
         # -------------------------#
         # 获得学习率下降的公式
@@ -421,9 +425,9 @@ if __name__ == "__main__":
         # 构建数据集加载器
         # -------------------------#
         train_dataset = YoloDataset(train_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch, \
-                                    mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob, traint=True, special_aug_ratio=special_aug_ration)
+                                    mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob, train=True, special_aug_ratio=special_aug_ration)
         val_dataset   = YoloDataset(val_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch, \
-                                    mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob, traint=False, special_aug_ratio=0)
+                                    mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob, train=False, special_aug_ratio=0)
         # -------------------------------------#
         # 设置数据采样器（sampler）的，在分布式训练和非分布式训练的情况下有所不同
         # -------------------------------------#
@@ -433,22 +437,22 @@ if __name__ == "__main__":
             batch_size    = batch_size // ngpus_per_node
             shuffle       = False
         else:
-            train_sampler = False
-            val_sample    = False
+            train_sampler = None
+            val_sampler    = None
             shuffle       = True
 
-        gen = DataLoader(train_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True, \
-                         drop_last=True, collate_fn=yolo_dataset_collate, sampler=train_sampler, \
+        gen = DataLoader(train_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
+                         drop_last=True, collate_fn=yolo_dataset_collate, sampler=train_sampler,
                          worker_init_fn=partial(worker_init_fn, rank=rank, seed=seed))
-        gen_val = DataLoader(val_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True, \
-                         drop_last=True, collate_fn=yolo_dataset_collate, sampler=val_sampler, \
+        gen_val = DataLoader(val_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
+                         drop_last=True, collate_fn=yolo_dataset_collate, sampler=val_sampler,
                          worker_init_fn=partial(worker_init_fn, rank=rank, seed=seed))
 
         # ----------------------------------#
         # 记录eval的map曲线
         # ----------------------------------#
         if local_rank == 0:
-            eval_callback = EvalCallback(model, input_shape, anchors, anchors_mask, class_names, num_classes, val_lines, log_dir, Cuda, \
+            eval_callback = EvalCallback(model, input_shape, anchors, anchors_mask, class_names, num_classes, val_lines, log_dir, Cuda,
                                          eval_flag=eval_flag, period=eval_period)
         else:
             eval_callback = None
@@ -489,12 +493,10 @@ if __name__ == "__main__":
                 if distributed:
                     batch_size = batch_size // ngpus_per_node
 
-                gen = DataLoader(train_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers,
-                                 pin_memory=True,
+                gen = DataLoader(train_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
                                  drop_last=True, collate_fn=yolo_dataset_collate, sampler=train_sampler,
                                  worker_init_fn=partial(worker_init_fn, rank=rank, seed=seed))
-                gen_val = DataLoader(val_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers,
-                                     pin_memory=True,
+                gen_val = DataLoader(val_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
                                      drop_last=True, collate_fn=yolo_dataset_collate, sampler=val_sampler,
                                      worker_init_fn=partial(worker_init_fn, rank=rank, seed=seed))
 
@@ -508,9 +510,7 @@ if __name__ == "__main__":
 
             set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
 
-            fit_one_epoch(model_train, model, yolo_loss, loss_history, eval_callback, optimizer, epoch, epoch_step,
-                          epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, fp16, scaler, save_period, save_dir,
-                          local_rank)
+            fit_one_epoch(model_train, model, yolo_loss, loss_history, eval_callback, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rank)
 
             if distributed:
                 dist.barrier()

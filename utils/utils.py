@@ -3,25 +3,47 @@ import numpy as np
 import torch
 from PIL import Image
 
+
+# ---------------------------------------#
+# 将图像转换成RGB图像，防止灰度图在预测时报错
+# 代码仅支持RGB图像的预测，所有其他类型的图像都会转化为RGB
+# ---------------------------------------#
+
+def cvtColor(image):
+    if isinstance(image, Image.Image):
+        image_array = np.array(image)
+        if len(np.shape(image_array)) == 3 and np.shape(image_array)[2] == 3:
+            return image
+        else:
+            image = image.convert('RGB')
+            return image
+
+
 # -------------------------------------- #
 # 获得类
 # -------------------------------------- #
 def get_classes(classes_path):
     with open(classes_path, encoding='utf-8') as f:
-        class_name = f.readlines()
-    class_name = [c.strip() for c in class_name]
-    return class_name, len(class_name)
+        class_names = f.readlines()
+    class_names = [c.strip() for c in class_names]
+    return class_names, len(class_names)
 
 # -------------------------------------- #
 # 获得先验框
 # -------------------------------------- #
 def get_anchors(anchors_path):
-    with open(anchors_path,encoding='utf-8') as f:
+    with open(anchors_path, encoding='utf-8') as f:
         anchors = f.readline()
     anchors = [float(x) for x in anchors.split(',')]
     anchors = np.array(anchors).reshape(-1, 2)
     return anchors, len(anchors)
 
+# ---------------------------------------#
+# 获得学习率
+# ---------------------------------------#
+def get_lr(optimizer):
+    for param_group in optimizer.param_groups:
+        return param_group['lr']
 # ---------------------------------------#
 # 设置种子
 # 这个函数的主要目的是通过设置多个库的随机种子和配置，确保在多次运行代码时，涉及随机性的部分能够产生相同的结果
@@ -39,7 +61,19 @@ def seed_everything(seed=11):
     # 选择算法
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
+# --------------------------------------#
+# 设置Dataloader的种子
+# 用于在多进程数据加载时初始化每个工作进程的随机数生成器
+# 确保不同进程之间数据加载和预处理的一致性
+# --------------------------------------#
+def worker_init_fn(worker_id, rank, seed):
+    worker_seed = rank + seed
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+def preprocess_input(image):
+    image /= 255.0
+    return image
 # ---------------------------------------#
 # 打印出训练参数
 # ---------------------------------------#
