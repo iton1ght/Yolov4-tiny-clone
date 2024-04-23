@@ -16,6 +16,7 @@ class BasicConv(nn.Module):
         x = self.conv(x)
         x = self.bn(x)
         x = self.activation(x)
+        return x
 # 定义Resblock_body模块
 class Resblock_body(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -33,22 +34,22 @@ class Resblock_body(nn.Module):
         self.maxpool = nn.MaxPool2d([2,2], [2,2])
     def forward(self, x):
         # 第一个卷积3x3
-        x = self.convbnleaky_1(x)
+        x = self.conv1(x)
         # 引出大残差边
         route_1 = x
         # 对特征层的通道进行分割，取第二部分进行主干运算
         c = self.in_channels
         x = torch.split(x, c//2, 1)[1] # 沿着第二个维度（通道维度）将张量 x 分割成大小为 c//2 的块，并取这些块中的第二个块作为新的 x。
         # 第二个卷积3x3
-        x = self.convbnleaky_2(x)
+        x = self.conv2(x)
         # 引出小残差边
         route_2 = x
         # 第三个卷积3x3
-        x = self.convbnleaky_3(x)
+        x = self.conv3(x)
         # 小残差边与主干进行通道维度合并
         x = torch.cat([x, route_2],1)
         # 第四个卷积1x1，卷积核为1时，通常为改变通道数
-        x = self.convbnleaky_4(x)
+        x = self.conv4(x)
         # 输出特征层
         feat = x
         # 大残差边与主干进行通道维度合并
@@ -91,9 +92,9 @@ class CSPDarkNet(nn.Module):
 
         x = self.conv1(x)
         x = self.conv2(x)
-        x, _ = self.resblockbody_1(x)
-        x, _ = self.resblockbody_2(x)
-        x, feat1 = self.resblockbody_3(x) #feat1 为26x26x256
+        x, _ = self.resblock_body1(x)
+        x, _ = self.resblock_body2(x)
+        x, feat1 = self.resblock_body3(x) #feat1 为26x26x256
         x = self.conv3(x)
         feat2 = x  #feat2 为13x13x512
         return feat1, feat2

@@ -42,7 +42,7 @@ class LossHistory():
         with open(os.path.join(self.log_dir, 'epoch_loss.txt'), 'a') as f:
             f.write(str(loss))
             f.write('\n')
-        with open(os.path.join(self.log_dir, 'epoch_val_loss.txt', 'a')) as f:
+        with open(os.path.join(self.log_dir, 'epoch_val_loss.txt'), 'a') as f:
             f.write(str(val_loss))
             f.write('\n')
         self.writer.add_scalar('loss', loss, epoch)

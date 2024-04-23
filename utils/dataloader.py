@@ -5,9 +5,12 @@ import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data.dataset import Dataset
+
 from utils.utils import cvtColor, preprocess_input
+
+
 class YoloDataset(Dataset):
-    def __init__(self, annotation_lines, input_shape, num_classes, epoch_length, \
+    def __init__(self, annotation_lines, input_shape, num_classes, epoch_length,
                         mosaic, mixup, mosaic_prob, mixup_prob, train, special_aug_ratio=0.7):
         super().__init__()
         self.annotation_lines = annotation_lines
@@ -125,9 +128,9 @@ class YoloDataset(Dataset):
                 # 通过布尔数组的方式，对真实框左上右下坐标进行处理，使其在图像范围内
                 # 对真实框左上坐标进行不小于0处理
                 # 对真实框右下坐标进行不大于缩放后宽高处理
-                box[:, 0:2] = box[:, 0:2][box[:, 0:2] < 0] = 0
-                box[:, 2] = box[:, 2][box[:, 2] > w] = w
-                box[:, 3] = box[:, 3][box[:, 3] > h] = h
+                box[:, 0:2][box[:, 0:2] < 0] = 0
+                box[:, 2][box[:, 2] > w] = w
+                box[:, 3][box[:, 3] > h] = h
                 box_w = box[:, 2] - box[:, 0]
                 box_h = box[:, 3] - box[:, 1]
                 # 宽度列和高度列生产布尔数组
@@ -154,7 +157,7 @@ class YoloDataset(Dataset):
         image = image.resize((nw, nh), Image.BICUBIC)
         dx = int(self.rand(0, w - nw))
         dy = int(self.rand(0, h - nh))
-        new_image = Image.new('RGB', (nw, nh), (128, 128, 128))
+        new_image = Image.new('RGB', (w, h), (128, 128, 128))
         new_image.paste(image, (dx, dy))
         image = new_image
 
@@ -185,41 +188,47 @@ class YoloDataset(Dataset):
         lut_sat = np.clip(x * r[1], 0, 255).astype(dtype)
         lut_val = np.clip(x * r[2], 0, 255).astype(dtype)
         # 应用查找表
-        image_data = cv2.merge(cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val))
-        image_data = cv2.cvtColor(image_data, cv2.COLOR_HSVRGB)
+        image_data = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
+        image_data = cv2.cvtColor(image_data, cv2.COLOR_HSV2RGB)
         # -------------------------------------#
         # 对真实框进行调整
         # -------------------------------------#
-        if len(box) > 1:
+        if len(box) > 0:
             np.random.shuffle(box)
             box[:, [0, 2]] = box[:, [0, 2]] * nw / iw + dx
             box[:, [1, 3]] = box[:, [1, 3]] * nh / ih + dy
             if flip:
                 box[:, [0, 2]] = w - box[:, [2, 0]]
-            box[:, 0:2] = box[:, 0:2][box[:, 0:2] < 0] = 0
-            box[:, 3] = box[:, 3][box[:, 3] > w] = w
-            box[:, 4] = box[:, 4][box[:, 4] > h] = h
+            box[:, 0:2][box[:, 0:2] < 0] = 0
+            box[:, 2][box[:, 2] > w] = w
+            box[:, 3][box[:, 3] > h] = h
             box_w = box[:, 2] - box[:, 0]
             box_h = box[:, 3] - box[:, 1]
             box = box[np.logical_and(box_w > 1, box_h > 1)]
 
         return image_data, box
 
-    def merge_bboxes(self, bboxes, cutx, cuty):
+    # def merge_bboxes(self, bboxes, cutx, cuty):
+    #
+    #     return merge_bbox
 
-        return merge_bbox
-
-    def get_random_data_with_Mosaic(self, annotation_line, input_shape, jitter=0.3, hue=.1, sat=0.7, val=0.4):
-
-        return new_image, new_boxes
+    # def get_random_data_with_Mosaic(self, annotation_line, input_shape, jitter=0.3, hue=.1, sat=0.7, val=0.4):
+    #
+    #     return new_image, new_boxes
     # ------------------------------------#
     # 定义mixup增强函数
     # ------------------------------------#
-    def get_random_data_with_Mixup(self, image_1, box_1, image_2, box_2):
-
-        return new_image, new_boxes
+    # def get_random_data_with_Mixup(self, image_1, box_1, image_2, box_2):
+    #
+    #     return new_image, new_boxes
 
 
 def yolo_dataset_collate(batch):
-
+    images = []
+    bboxes = []
+    for img, box in batch:
+        images.append(img)
+        bboxes.append(box)
+    images = torch.from_numpy(np.array(images)).type(torch.FloatTensor)
+    bboxes = [torch.from_numpy(ann).type(torch.FloatTensor) for ann in bboxes]
     return images, bboxes

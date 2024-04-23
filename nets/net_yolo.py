@@ -57,7 +57,7 @@ class YoloBody(nn.Module):
         self.upsample     = Upsample(256, 128)
         self.yolo_headP4 = yolo_head([256, len(anchor_mask[1])*(5+num_classes)], 384)
 
-    def forward(self,x):
+    def forward(self, x):
 
         feat1, feat2 = self.backbone(x)
 

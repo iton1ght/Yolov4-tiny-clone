@@ -217,8 +217,8 @@ if __name__ == "__main__":
     #   train_annotation_path   训练图片路径和标签
     #   val_annotation_path     验证图片路径和标签
     # ------------------------------------------------------#
-    train_annotation_path = '../2007_train.txt'
-    val_annotation_path = '../2007_val.txt'
+    train_annotation_path = '2007_train.txt'
+    val_annotation_path = '2007_val.txt'
 
     seed_everything(seed)
     # 设置用到的显卡
@@ -424,10 +424,10 @@ if __name__ == "__main__":
         # -------------------------#
         # 构建数据集加载器
         # -------------------------#
-        train_dataset = YoloDataset(train_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch, \
+        train_dataset = YoloDataset(train_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch,
                                     mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob, train=True, special_aug_ratio=special_aug_ration)
-        val_dataset   = YoloDataset(val_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch, \
-                                    mosaic=mosaic, mixup=mixup, mosaic_prob=mosaic_prob, mixup_prob=mixup_prob, train=False, special_aug_ratio=0)
+        val_dataset   = YoloDataset(val_lines, input_shape, num_classes, epoch_length=UnFreeze_Epoch,
+                                    mosaic=False, mixup=False, mosaic_prob=0, mixup_prob=0, train=False, special_aug_ratio=0)
         # -------------------------------------#
         # 设置数据采样器（sampler）的，在分布式训练和非分布式训练的情况下有所不同
         # -------------------------------------#
@@ -438,7 +438,7 @@ if __name__ == "__main__":
             shuffle       = False
         else:
             train_sampler = None
-            val_sampler    = None
+            val_sampler   = None
             shuffle       = True
 
         gen = DataLoader(train_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,

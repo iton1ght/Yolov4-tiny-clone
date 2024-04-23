@@ -133,7 +133,7 @@ class YoloLoss(nn.Module):
         # 先将两个张量转化为相同维度，再进行计算
         # 计算所有交框的左上角和右下角坐标，再计算交框的面积
         intersect_mins = torch.max(_box_a[:, :2].unsqueeze(1).expand(A, B, 2), _box_b[:, :2].unsqueeze(0).expand(A, B, 2))  # [A, B, 2]
-        intersect_maxs = torch.min(_box_a[:, 2:].unsqueeze(1).expand(A, B, 2), _box_b[:, 2:].unsqueeze(1).expand(A, B, 2))  # [A, B, 2]
+        intersect_maxs = torch.min(_box_a[:, 2:].unsqueeze(1).expand(A, B, 2), _box_b[:, 2:].unsqueeze(0).expand(A, B, 2))  # [A, B, 2]
         intersect_wh   = torch.max(intersect_maxs - intersect_mins, torch.zeros_like(intersect_maxs))  # [A, B, 2]
         intersect_area = intersect_wh[:, :, 0] * intersect_wh[:, :, 1]  # [A, B]
 
@@ -155,7 +155,7 @@ class YoloLoss(nn.Module):
         """
         函数定义: 待填充
         :param l: l代表特征图序号，即选择第l个特征图
-        :param targets: 代表真实框数据标签，包括批次，真实框数量，以及真实框坐标和类别信息，shape=[bs, gt_num, 5], 5->xywhc
+        :param targets: 代表真实框数据标签，包括批次，真实框数量，以及真实框坐标和类别信息，shape=[bs, gt_num, 5], 5->xywhc :注意，在后续调试过程，发现targets是一个列表，非张量
         :param scale_anchors: 在特征图尺度上的先验框列表, 即原anchors进行缩放
         :param in_h: 特征图高度
         :param in_w: 特征图宽度
@@ -165,8 +165,8 @@ class YoloLoss(nn.Module):
         noobj_mask:创建一个张量，用于标记哪些先验框不包含物体（即负样本）。在训练过程中，这些负样本通常对损失函数的贡献较小，有助于平衡正负样本的影响
         box_loss_scale:用于调整不同大小的物体在损失函数中的权重，特别是用于让网络更加关注小目标。小目标在特征图中通常只占据少量像素，因此可能需要额外的权重来确保它们得到足够的关注。
         """
-        # 获取批次大小
-        bs = targets.size(0)
+        # 获取批次大小，即图片的数量
+        bs = len(targets)
         # 获取该特征图下的先验框数量
         anchors_num = len(self.anchors_mask[l])
         # 创建一个张量，标记哪些先验框不包含物体，初始化时全都不包含，即张量元素均为1
@@ -178,7 +178,7 @@ class YoloLoss(nn.Module):
 
         # 对批次内每张图片的每个真实框与预设所有先验框进行交并比计算，从而选出最大交并比的先验框，作为该真实框的最初尺寸分类
         for b in range(bs):
-            if targets[b].size(0) == 0:
+            if len(targets) == 0:
                 continue
             batch_target = torch.zeros_like(targets[b])
             # 计算出原图中正样本在特征图上的中心点和宽高
@@ -188,11 +188,11 @@ class YoloLoss(nn.Module):
             # 提取真实框的类别序号
             batch_target[:, 4] = targets[b][:, 4]
 
-            # 将真实框张量转换形式，中心坐标归0（先验框无中心坐标，所以两者都取0），即移至坐标原点,方便后续计算交并比,代入到box_iou进行计算
+            # 将真实框由列表转换为张量形式，中心坐标归0（先验框无中心坐标，所以两者都取0），即移至坐标原点,方便后续计算交并比,代入到box_iou进行计算
             # 真实框张量, shape = [gt_num, 4]
-            gt_box = torch.cat((torch.zeros(batch_target.size(0), 2), batch_target[:, 2:4]), 1)
+            gt_box = torch.FloatTensor(torch.cat((torch.zeros(batch_target.size(0), 2), batch_target[:, 2:4]), 1))
             # 先验框张量，shape = [anchors_num, 4]，这里的先验框数量取的是总数量，并非子列表的先验框数量,按照该类的先验框初始化情况，应为9个
-            anchors_box = torch.cat((torch.zeros(len(scale_anchors), 2), torch.tensor(scale_anchors)), 1)
+            anchors_box = torch.FloatTensor(torch.cat((torch.zeros(len(scale_anchors), 2), torch.FloatTensor(scale_anchors)), 1))
             # 计算交并比
             # self.calculate_iou(gt_box, anchors_box) = [num_true_box, 9]每一个真实框和9个先验框的重合情况
             iou = self.box_iou(gt_box, anchors_box)  # [gt_num, anchors_num]
@@ -261,7 +261,7 @@ class YoloLoss(nn.Module):
         noobj_mask: 无目标掩码
         """
         # 获得批次大小
-        bs = targets.size(0)
+        bs = len(targets)
         # 生成网格，网格的左上角坐标即为先验框的中心
         grid_x = torch.linspace(0, in_w-1, in_w).repeat(in_h, 1).repeat(
             int(bs*len(self.anchors_mask[l])), 1, 1).view(x.shape).type_as(x)
@@ -274,8 +274,8 @@ class YoloLoss(nn.Module):
         anchor_h = torch.Tensor(scaled_anchors_l).index_select(1, torch.LongTensor([1])).type_as(x)
 
         # 转换张量形状，用于后续计算
-        anchor_w = anchor_w.repeat(bs, 1).repeat(1, 1, in_h, in_w).view(w.shapes)
-        anchor_h = anchor_h.repeat(bs, 1).repeat(1, 1, in_h, in_w).view(h.shapes)
+        anchor_w = anchor_w.repeat(bs, 1).repeat(1, 1, in_h, in_w).view(w.shape)
+        anchor_h = anchor_h.repeat(bs, 1).repeat(1, 1, in_h, in_w).view(h.shape)
 
         # 计算调整之后的先验框的中心和宽高，也就是预测框的中心和宽高
         pred_boxes_x = torch.unsqueeze(grid_x + x, -1)
@@ -289,23 +289,24 @@ class YoloLoss(nn.Module):
             # 将第b批次的预测框张量转换形式，[len(anchors_mask[l]), in_h, in_w, 4] ->[anchors_sum_num, 4]
             pred_boxes_for_ignore = pred_boxes[b].view(-1, 4)  # B=len(anchors_mask[l])*in_h*in_w
 
-            # 计算真实框张量，并转换为特征图尺度大小，shape=[gt_num, 4], A=4
-            batch_target = torch.zeros_like(targets[b])
-            batch_target[:, [0, 2]] = targets[b][:, [0, 2]] * in_w
-            batch_target[:, [1, 3]] = targets[b][:, [1, 3]] * in_h
-            batch_target[:, :4] = batch_target[:, :4].type_as(x)
+            # 计算真实框张量，并且数量大于0，并转换为特征图尺度大小，shape=[gt_num, 4], A=4
+            if len(targets[b]) > 0:
+                batch_target = torch.zeros_like(targets[b])
+                batch_target[:, [0, 2]] = targets[b][:, [0, 2]] * in_w
+                batch_target[:, [1, 3]] = targets[b][:, [1, 3]] * in_h
+                batch_target = batch_target[:, :4].type_as(x)
 
-            # 计算所有预测框和所有真实框的交并比
-            # 对于每一个预测框，求取最大交并比的真实框iou数值
-            iou = self.box_iou(batch_target, pred_boxes_for_ignore)  # iou shape=[A, B]
-            max_iou, _ = torch.max(iou, dim=0)  # max_iou为一维张量，大小为B
-            # 将张量max_iou再转换为与第b批次的pred_boxes相同的形状
-            max_iou = max_iou.view(pred_boxes[b].size()[:3])  # B -> [len(anchors_mask[l]), in_h, in_w]
+                # 计算所有预测框和所有真实框的交并比
+                # 对于每一个预测框，求取最大交并比的真实框iou数值
+                iou = self.box_iou(batch_target, pred_boxes_for_ignore)  # iou shape=[A, B]
+                max_iou, _ = torch.max(iou, dim=0)  # max_iou为一维张量，大小为B
+                # 将张量max_iou再转换为与第b批次的pred_boxes相同的形状
+                max_iou = max_iou.view(pred_boxes[b].size()[:3])  # B -> [len(anchors_mask[l]), in_h, in_w]
 
-            # 将max_iou的值与预设的ignore_threshord比较，大于预设交并比时为ture，形成一个布尔掩码。
-            # 利用布尔掩码对noobj_mask对应位置进行操作，如果为真则置0
-            # 该操作将预测框交并比较大的不予进入损失计算
-            noobj_mask[b][max_iou > self.ignore_threshord] = 0
+                # 将max_iou的值与预设的ignore_threshord比较，大于预设交并比时为ture，形成一个布尔掩码。
+                # 利用布尔掩码对noobj_mask对应位置进行操作，如果为真则置0
+                # 该操作将预测框交并比较大的不予进入损失计算
+                noobj_mask[b][max_iou > self.ignore_threshord] = 0
 
         return pred_boxes, noobj_mask
     def forward(self, l, input, targets=None):
