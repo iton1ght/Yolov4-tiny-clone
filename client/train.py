@@ -15,7 +15,7 @@ from nets.net_yolo import YoloBody
 from nets.net_loss import (YoloLoss, get_lr_scheduler, weights_init, set_optimizer_lr)
 
 from utils.utils import (get_classes, get_anchors, show_config, seed_everything, worker_init_fn)
-from utils.utils_fit import fit_one_epoch
+from utils.utils_oneepoch  import one_epoch
 from utils.callbacks import (LossHistory, EvalCallback)
 from utils.dataloader import (YoloDataset, yolo_dataset_collate)
 
@@ -502,7 +502,9 @@ if __name__ == "__main__":
 
                 UnFreeze_flag = True
 
+            # 训练集当前世代
             gen.dataset.epoch_now = epoch
+            # 验证集当前世代
             gen_val.dataset.epoch_now = epoch
 
             if distributed:
@@ -510,7 +512,7 @@ if __name__ == "__main__":
 
             set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
 
-            fit_one_epoch(model_train, model, yolo_loss, loss_history, eval_callback, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rank)
+            one_epoch(model_train, model, yolo_loss, loss_history, eval_callback, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rank)
 
             if distributed:
                 dist.barrier()
