@@ -24,6 +24,8 @@ class BasicConv(nn.Module):
         return x
 
 # 定义上采样模块
+# 上采样模块包括：ConvBNLeady + Unsample
+# nn.Sequential 是 PyTorch 中用于创建一个包含多个模块的序列容器。这个容器会按照模块在构造函数中传入的顺序来执行它们
 class Upsample(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -36,6 +38,8 @@ class Upsample(nn.Module):
         return x
 
 # 定义头部模块
+# filters_list是一个包括两个元素的列表，分别代表最后一个标准卷积的输入通道数和输出通道数
+# 第一个元素代表输入通道数（512或256），第二个元素代表c，也就是输出通道数
 def yolo_head(filters_list, in_filters):
     m = nn.Sequential(
         BasicConv(in_filters, filters_list[0], kernel_size=3),

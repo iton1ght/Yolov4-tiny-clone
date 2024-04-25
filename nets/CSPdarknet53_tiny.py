@@ -18,6 +18,7 @@ class BasicConv(nn.Module):
         x = self.activation(x)
         return x
 # 定义Resblock_body模块
+# 模块的特点为存在一大一小残差边，大残差边为第一次卷积标准化激活的输出，小残差边为第二次卷积标准化激活的输出
 class Resblock_body(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -37,7 +38,7 @@ class Resblock_body(nn.Module):
         x = self.conv1(x)
         # 引出大残差边
         route_1 = x
-        # 对特征层的通道进行分割，取第二部分进行主干运算
+        # 对特征层的通道进行分割，取第二部分进行主干运算，第二部分通道数为原来的一半
         c = self.in_channels
         x = torch.split(x, c//2, 1)[1] # 沿着第二个维度（通道维度）将张量 x 分割成大小为 c//2 的块，并取这些块中的第二个块作为新的 x。
         # 第二个卷积3x3
@@ -82,7 +83,7 @@ class CSPDarkNet(nn.Module):
         # 定义初始化权重
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels  #初始化的权重应与卷积核大小和输入通道书成反比（与源码有差异）
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels 
                 m.weight.data.normal_(0, math.sqrt(2./n))
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
