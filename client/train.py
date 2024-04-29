@@ -16,7 +16,7 @@ from nets.net_loss import (YoloLoss, get_lr_scheduler, weights_init, set_optimiz
 
 from utils.utils import (get_classes, get_anchors, show_config, seed_everything, worker_init_fn)
 from utils.utils_oneepoch  import one_epoch
-from utils.callbacks import (LossHistory, EvalCallback)
+from utils.callbacks import (LossHistory)
 from utils.dataloader import (YoloDataset, yolo_dataset_collate)
 
 if __name__ == "__main__":
@@ -236,6 +236,7 @@ if __name__ == "__main__":
         local_rank      = 0
         rank            = 0
 
+    # -------------------------------------------------------------------------------------------------------#
     # 获取classes和anchor
     class_names, num_classes = get_classes(classes_path)
     anchors, num_anchors = get_anchors(anchors_path)
@@ -451,11 +452,11 @@ if __name__ == "__main__":
         # ----------------------------------#
         # 记录eval的map曲线
         # ----------------------------------#
-        if local_rank == 0:
-            eval_callback = EvalCallback(model, input_shape, anchors, anchors_mask, class_names, num_classes, val_lines, log_dir, Cuda,
-                                         eval_flag=eval_flag, period=eval_period)
-        else:
-            eval_callback = None
+        # if local_rank == 0:
+        #     eval_callback = EvalCallback(model, input_shape, anchors, anchors_mask, class_names, num_classes, val_lines, log_dir, Cuda,
+        #                                  eval_flag=eval_flag, period=eval_period)
+        # else:
+        #     eval_callback = None
 
         # ----------------------------------#
         # 开始模型训练
@@ -512,7 +513,7 @@ if __name__ == "__main__":
 
             set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
 
-            one_epoch(model_train, model, yolo_loss, loss_history, eval_callback, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rank)
+            one_epoch(model_train, model, yolo_loss, loss_history, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rank)
 
             if distributed:
                 dist.barrier()

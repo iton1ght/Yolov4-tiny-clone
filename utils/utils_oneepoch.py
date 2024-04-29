@@ -6,7 +6,7 @@ from tqdm import tqdm
 from utils.utils import get_lr
 
 # 定义一个世代的训练函数
-def one_epoch(model_train, model, yolo_loss, loss_history, eval_callback,
+def one_epoch(model_train, model, yolo_loss, loss_history,
               optimizer, epoch, epoch_step, epoch_val_step, gen, gen_val,
               Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rand=0):
     """
@@ -154,7 +154,7 @@ def one_epoch(model_train, model, yolo_loss, loss_history, eval_callback,
         print('结束第', epoch + 1, '世代验证')
 
         loss_history.append_loss(epoch + 1, loss / epoch_step, val_loss / epoch_val_step)
-        eval_callback.on_epoch_end(epoch + 1, model_train)
+        # eval_callback.on_epoch_end(epoch + 1, model_train)
         print('Epoch:' + str(epoch + 1) + '/' + str(Epoch))
         print('Total Loss: %.3f || Val loss: %.3f' %(loss / epoch_step, val_loss / epoch_val_step))
 

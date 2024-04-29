@@ -211,7 +211,7 @@ class YoloDataset(Dataset):
     # def merge_bboxes(self, bboxes, cutx, cuty):
     #
     #     return merge_bbox
-
+    # 定义mosaic数据增强函数
     # def get_random_data_with_Mosaic(self, annotation_line, input_shape, jitter=0.3, hue=.1, sat=0.7, val=0.4):
     #
     #     return new_image, new_boxes

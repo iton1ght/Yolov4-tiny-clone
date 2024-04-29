@@ -153,7 +153,7 @@ class YoloLoss(nn.Module):
 
     def get_target(self, l, targets, scale_anchors, in_h, in_w):
         """
-        函数定义: 待填充
+        函数定义: 该方法主要是获取真实目标的张量以及无目标掩码张量
         :param l: l代表特征图序号，即选择第l个特征图
         :param targets: 代表真实框数据标签，包括批次，真实框数量，以及真实框坐标和类别信息，shape=[bs, gt_num, 5], 5->xywhc :注意，在后续调试过程，发现targets是一个列表，非张量
         :param scale_anchors: 在特征图尺度上的先验框列表, 即原anchors进行缩放
@@ -316,7 +316,7 @@ class YoloLoss(nn.Module):
         :param input: 特征图输入，yolov4-tiny有两个特征图
                       l=0时，shape = [bs, 3*(5+classes_num), 13, 13]
                       l=1时，shape = [bs, 3*(5+classes_num), 26, 26]
-        :param targets: 真实图输入，即真实标签输入情况
+        :param targets: 真实图输入，即真实标签输入情况，此处targets为列表非张量
                       shape = [bs, gt_num, 5]
         :return:
         loss: 输出损失值
@@ -385,7 +385,7 @@ class YoloLoss(nn.Module):
             # 计算回归损失，即定位回归损失值
             # 通过使用布尔索引，我们只选择那些 obj_mask 为 True 的位置上的 (1 - ciou) 值。这确保了只有正样本的预测框对损失有贡献。
             loss_loc = torch.mean((1 - ciou)[obj_mask])
-            # 同理使用布尔索引，利用二元交叉熵损失函数计算分类损失
+            # 同理使用布尔索引，确保了只有正样本的预测框分类对损失有贡献，利用二元交叉熵损失函数计算分类损失
             loss_cls = torch.mean(self.BSELoss(pred_cls[obj_mask], y_true[..., 5:][obj_mask]))
             # 合并损失，引入权重
             loss += loss_loc * self.box_ratio + loss_cls * self.cls_ratio
@@ -397,6 +397,8 @@ class YoloLoss(nn.Module):
         # [noobj_mask.bool() | obj_mask]，这个逻辑或运算的结果是一个新的布尔数组，其中每个元素都是 noobj_mask 和 obj_mask 对应位置元素逻辑或的结果，形成新的布尔掩码
         # 因此置信度计算既考虑了正样本，也考虑负样本
         loss_conf = torch.mean(self.BSELoss(conf, obj_mask.type_as(conf))[noobj_mask.bool() | obj_mask])
+        # l=0特征图尺寸13x13，self.balance[l]=0.4；l=1特征图尺寸26x26，self.balance[l]=1。
+        # 小特征图通常为了捕获较大目标，大特征图通常为了捕获较小目标，因为大特征图置信度损失权重大一些，让模型更关注小目标的检测。
         loss += loss_conf * self.balance[l] * self.obj_ratio
         return loss
 
