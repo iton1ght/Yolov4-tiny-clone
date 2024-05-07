@@ -20,7 +20,7 @@ def cvtColor(image):
 
 
 # -------------------------------------- #
-# 获得类
+# 读取分类文件，获得类名和数量
 # -------------------------------------- #
 def get_classes(classes_path):
     with open(classes_path, encoding='utf-8') as f:
@@ -29,7 +29,7 @@ def get_classes(classes_path):
     return class_names, len(class_names)
 
 # -------------------------------------- #
-# 获得先验框
+# 读取先验框文件，获得先验框数组和先验框数量
 # -------------------------------------- #
 def get_anchors(anchors_path):
     with open(anchors_path, encoding='utf-8') as f:
@@ -39,7 +39,7 @@ def get_anchors(anchors_path):
     return anchors, len(anchors)
 
 # ---------------------------------------#
-# 获得学习率
+# 获得优化器中学习率
 # ---------------------------------------#
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
@@ -71,6 +71,8 @@ def worker_init_fn(worker_id, rank, seed):
     random.seed(worker_seed)
     np.random.seed(worker_seed)
     torch.manual_seed(worker_seed)
+
+# 对图像像素值进行归一化操作
 def preprocess_input(image):
     image /= 255.0
     return image
@@ -84,4 +86,4 @@ def show_config(**kwargs):
     print('-'*70)
     for key, value in kwargs.items():
         print('|%25s | %40s|' % (str(key), str(value)))
-    print(('-'*70))
+    print('-'*70)

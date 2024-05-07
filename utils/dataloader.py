@@ -11,7 +11,20 @@ from utils.utils import cvtColor, preprocess_input
 
 class YoloDataset(Dataset):
     def __init__(self, annotation_lines, input_shape, num_classes, epoch_length,
-                        mosaic, mixup, mosaic_prob, mixup_prob, train, special_aug_ratio=0.7):
+                 mosaic, mixup, mosaic_prob, mixup_prob, train, special_aug_ratio=0.7):
+        """
+
+        :param annotation_lines: 数据集列表
+        :param input_shape: 输入图片的尺寸
+        :param num_classes: 类别数量
+        :param epoch_length: 训练总世代数
+        :param mosaic: 是否进行mosaic增强，布尔值
+        :param mixup: 是否进行mixup增强，布尔值
+        :param mosaic_prob: 图片进行mosaic增强的比例
+        :param mixup_prob: 图片进行mixup增强的比例（前提得进行mosaic增强）
+        :param train: 训练模式
+        :param special_aug_ratio: 进行数据增强的世代的比例
+        """
         super().__init__()
         self.annotation_lines = annotation_lines
         self.input_shape      = input_shape
@@ -63,7 +76,7 @@ class YoloDataset(Dataset):
         # 如果不进行mosaic增强，则对数据进行常规随机处理
         else:
             image, box = self.get_random_data(self.annotation_lines[index], self.input_shape, random=self.train)
-
+        # 先将图像转换为浮点数数组，在进行归一化操作，最后利用转置将图像形状转化为（channels,height,width）
         image = np.transpose(preprocess_input(np.array(image, dtype=np.float32)), (2, 0, 1))
         box   = np.array(box, dtype=np.float32)
         if len(box) != 0:
@@ -211,10 +224,152 @@ class YoloDataset(Dataset):
     # def merge_bboxes(self, bboxes, cutx, cuty):
     #
     #     return merge_bbox
+    # ------------------------------------#
     # 定义mosaic数据增强函数
-    # def get_random_data_with_Mosaic(self, annotation_line, input_shape, jitter=0.3, hue=.1, sat=0.7, val=0.4):
-    #
-    #     return new_image, new_boxes
+    # ------------------------------------#
+    def get_random_data_with_Mosaic(self, annotation_line, input_shape, jitter=0.3, hue=.1, sat=0.7, val=0.4):
+        h, w = input_shape
+        # min_offset_x和min_offset_y这两个值用于确定四张图片的中心位置在原input_shape的相对位置
+        min_offset_x = self.rand(0.3, 0.7)
+        min_offset_y = self.rand(0.3, 0.7)
+
+        image_datas = []
+        box_datas   = []
+        # annotation_line中包括四张图片，从index=0开始索引
+        index       = 0
+
+        for line in annotation_line:
+            # 对每一行进行分割，根据数据格式，按照'空格'进行分割
+            line_content = line.split('')
+
+            # 分割后形成字符串列表，对于列表第一个元素即为图片所在文件位置索引
+            # 打开图片，并进行RGB三通道转换
+            image = Image.open(line_content[0])
+            image = cvtColor(image)
+
+            # 获取图片的尺寸大小
+            iw, ih = image.size
+
+            # 获取真实框的数据
+            box = np.array([np.array(list(map(lambda x: int(x), box.split(',')))) for box in line_content[1:]])
+
+            # 判断是否翻转图片
+            flip = self.rand() < 0.5
+            if flip and len(box) > 0:
+                # 将图片进行左右翻转（image.flip用于翻转，image.transpose用于旋转）
+                image = image.flip(Image.FLIP_LEFT_RIGHT)
+                # 由于图片进行翻转，真实框的坐标发生变化（坐标系未变，仍是左上角为零点），所以得重新计算更新后的坐标
+                # 由于是左右翻转，只有x方向的坐标发生变化
+                box[:, [0, 2]] = iw - box[:, [2, 0]]
+
+            # ---------------------------------------#
+            # 对图像进行缩放，并进行长和宽的扭曲
+            # ---------------------------------------#
+            new_ar = iw / ih * self.rand(1 - jitter, 1 + jitter) / self.rand(1 - jitter, 1 + jitter)
+            scale = self.rand(0.4, 1)
+            if new_ar < 1:
+                nh = int(ih * scale)
+                nw = int(nh * new_ar)
+            else:
+                nw = int(iw * scale)
+                nh = int(nw * new_ar)
+            image = image.resize((nw, nh), Image.BICUBIC)
+
+            # ----------------------------------------#
+            # 由于待处理的有四张图片，根据图片索引进行不同的操作
+            # 先计算每张图片在最终合成图片中的放置位置
+            # 四张图片围绕中心进行拼接
+            # ----------------------------------------#
+            if index == 0:
+                dx = int(w * min_offset_x) - nw
+                dy = int(h * min_offset_y) - nh
+            elif index == 1:
+                dx = int(w * min_offset_x) - nw
+                dy = int(h * min_offset_y)
+            elif index == 2:
+                dx = int(w * min_offset_x)
+                dy = int(h * min_offset_y)
+            elif index == 3:
+                dx = int(w * min_offset_x)
+                dy = int(h * min_offset_y) - nh
+
+            # 生成一张灰色底图，并将图片根据索引粘贴到相应位置
+            new_image = Image.new('RGB', (w, h), (128, 128, 128))
+            new_image.paste(image, (dx, dy))
+            image_data = np.array(new_image)
+            # 索引序号加1
+            index = index + 1
+
+            # ---------------------------------------#
+            # 对该图片的真实框进行处理
+            # ---------------------------------------#
+            box_data = []
+            if len(box) > 0:
+                np.random.shuffle(box)
+                # 根据图片的缩放变换和放置位置，对真实框进行处理
+                # 先对真实框进行缩放，在进行位置偏置
+                box[:, [0, 2]] = box[:, [0, 2]] * nw / iw + dx
+                box[:, [1, 3]] = box[:, [1, 3]] * nh / ih + dy
+                # 考虑到缩放后真实框可能已经越界，所以要多数据进行截取处理
+                box[:, 0:2][box[:, 0:2] < 0] = 0
+                box[:, 2][box[:, 2] > w] = w
+                box[:, 3][box[:, 3] > h] = h
+                box_w = box[:, 2] - box[:, 0]
+                box_h = box[:, 3] - box[:, 1]
+                box = box[np.logical_and(box_w > 1, box_h > 1)]
+                box_data = np.zeros((len(box), 5))
+                box_data[:len(box)] = box
+            image_datas.append(image_data)
+            box_datas.append(box_data)
+
+        # --------------------------------------#
+        # 将处理好的图片合并到一起，形成一张新的图片
+        # --------------------------------------#
+        # 拼接图片的中心点位置
+        cutx = int(w * min_offset_x)
+        cuty = int(h * min_offset_y)
+
+        # 生成一张空白的三通道图片的数组，注意这里是数组
+        # 按照数组索引位置，将四张图片的数组数据合并在一起
+        new_image = np.zeros([h, w, 3])
+        new_image[:cuty, :cutx, :] = image_datas[0][:cuty, :cutx, :]
+        new_image[cuty:, :cutx, :] = image_datas[1][cuty:, :cutx, :]
+        new_image[cuty:, cutx:, :] = image_datas[2][cuty:, cutx:, :]
+        new_image[:cuty, cutx:, :] = image_datas[3][:cuty, cutx:, :]
+
+        new_image = np.array(new_image, np.uint8)
+
+        # ---------------------------------------#
+        # 对图像进行色域变换
+        # 计算色域变换的参数
+        # ---------------------------------------#
+        r = np.random.uniform(-1, 1, 3) * [hue, sat, val] + 1
+        # 现将图片由RGB颜色空间转换为HSV颜色空间
+        # 再拆分成独立的通道，即色调、饱和度、亮度
+        hue, sat, val =cv2.split(cv2.cvtColor(new_image, cv2.COLOR_RGB2HSV))
+        dtype = new_image.dtype
+
+        # ----------------------------------------#
+        # 利用LUT查找表，将色调、饱和度、亮度三个通道的数值进行变换
+        # ----------------------------------------#
+        # 生成0-255一维等差数组，数据格式与r相同
+        x = np.arange(0, 256, dtype=r.dtype)
+        # 根据色域变换参数r，生成色调、饱和度、亮度的变化查找表
+        lut_hue = ((x * r[0]) % 180).astype(dtype)
+        lut_sat = np.clip(x * r[1], 0, 255).astype(dtype)
+        lut_val = np.clip(x * r[2], 0, 255).astype(dtype)
+        # 应用查找表，对各个通道进行色域变换，并将通道合并
+        new_image = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
+        new_image = cv2.cvtColor(new_image, cv2.COLOR_HSV2RGB)
+
+        # -----------------------------------------#
+        # 对真实框进行进一步处理
+        # -----------------------------------------#
+        new_boxes = self.merge_bboxes(box_datas, cutx, cuty)
+
+
+        return new_image, new_boxes
+
     # ------------------------------------#
     # 定义mixup增强函数
     # ------------------------------------#
