@@ -100,9 +100,9 @@ if __name__ == "__main__":
     #                       当mosaic=True时，本代码会在special_aug_ratio范围内开启mosaic。
     #                       默认为前70%个epoch，100个世代会开启70个世代。
     # ------------------------------------------------------------------#
-    mosaic = False
+    mosaic = True
     mosaic_prob = 0.5
-    mixup = False
+    mixup = True
     mixup_prob = 0.5
     special_aug_ration = 0.7
     # 标签平滑。一般0.01以下，如0.01、0.005.

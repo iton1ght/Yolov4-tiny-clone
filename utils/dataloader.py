@@ -221,9 +221,57 @@ class YoloDataset(Dataset):
 
         return image_data, box
 
-    # def merge_bboxes(self, bboxes, cutx, cuty):
-    #
-    #     return merge_bbox
+    # ------------------------------------#
+    # 图片增强处理过程中对真实框处理方法
+    # 因为mosaic是将四张图片合并成一张图片，所以要将四张图片上的真实框合并到一个列表中
+    # 合并过程中需要对原来的真实框进行截取
+    # ------------------------------------#
+    def merge_bboxes(self, bboxes, cutx, cuty):
+        merge_bbox = []
+        for i in range(len(bboxes)):
+            for box in bboxes[i]:
+                tmp_box = []
+                x1, y1, x2, y2 = box[0], box[1], box[2], box[3]
+
+                if i == 0:
+                    if x1 > cutx or y1 > cuty:
+                        continue
+                    if y1 <= cuty and y2 >= cuty:
+                        y2 = cuty
+                    if x1 <= cutx and x2 >= cutx:
+                        x2 = cutx
+
+                if i == 1:
+                    if x1 > cutx or y2 < cuty:
+                        continue
+                    if y1 <= cuty and y2 >= cuty:
+                        y1 = cuty
+                    if x1 <= cutx and x2 >= cutx:
+                        x2 = cutx
+
+                if i == 2:
+                    if y2 < cuty or x2 < cutx:
+                        continue
+                    if y2 >= cuty and y1 <= cuty:
+                        y1 = cuty
+                    if x2 >= cutx and x1 <= cutx:
+                        x1 = cutx
+
+                if i == 3:
+                    if y1 > cuty or x2 < cutx:
+                        continue
+                    if y2 >= cuty and y1 <= cuty:
+                        y2 = cuty
+                    if x2 >= cutx and x1 <= cutx:
+                        x1 = cutx
+
+                tmp_box.append(x1)
+                tmp_box.append(y1)
+                tmp_box.append(x2)
+                tmp_box.append(y2)
+                tmp_box.append(box[-1])
+                merge_bbox.append(tmp_box)
+        return merge_bbox
     # ------------------------------------#
     # 定义mosaic数据增强函数
     # ------------------------------------#
@@ -240,7 +288,7 @@ class YoloDataset(Dataset):
 
         for line in annotation_line:
             # 对每一行进行分割，根据数据格式，按照'空格'进行分割
-            line_content = line.split('')
+            line_content = line.split(' ')
 
             # 分割后形成字符串列表，对于列表第一个元素即为图片所在文件位置索引
             # 打开图片，并进行RGB三通道转换
@@ -256,8 +304,8 @@ class YoloDataset(Dataset):
             # 判断是否翻转图片
             flip = self.rand() < 0.5
             if flip and len(box) > 0:
-                # 将图片进行左右翻转（image.flip用于翻转，image.transpose用于旋转）
-                image = image.flip(Image.FLIP_LEFT_RIGHT)
+                # 将图片进行左右翻转（image.transpose用于旋转或翻转）
+                image = image.transpose(Image.FLIP_LEFT_RIGHT)
                 # 由于图片进行翻转，真实框的坐标发生变化（坐标系未变，仍是左上角为零点），所以得重新计算更新后的坐标
                 # 由于是左右翻转，只有x方向的坐标发生变化
                 box[:, [0, 2]] = iw - box[:, [2, 0]]
@@ -373,9 +421,16 @@ class YoloDataset(Dataset):
     # ------------------------------------#
     # 定义mixup增强函数
     # ------------------------------------#
-    # def get_random_data_with_Mixup(self, image_1, box_1, image_2, box_2):
-    #
-    #     return new_image, new_boxes
+    def get_random_data_with_Mixup(self, image_1, box_1, image_2, box_2):
+         # 对两张图片进行像素点融合
+        new_image = np.array(image_1, np.float32) * 0.5 + np.array(image_2, np.float32) * 0.5
+        if len(box_1) == 0:
+             new_boxes = box_2
+        elif len(box_2) == 0:
+             new_boxes = box_1
+        else:
+            new_boxes = np.concatenate([box_1, box_2], 0)
+        return new_image, new_boxes
 
 
 def yolo_dataset_collate(batch):
