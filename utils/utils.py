@@ -18,6 +18,25 @@ def cvtColor(image):
             image = image.convert('RGB')
             return image
 
+# ---------------------------------------#
+# 对输入的图像进行resize，先缩放至size尺寸，空白处灰度填充
+# ---------------------------------------#
+def resize_image(image, size, letterbox_image):
+    iw, ih = image.size
+    w, h = size
+    if letterbox_image:
+        scale = min(w/iw, h/ih)
+        nw = int(iw * scale)
+        nh = int(ih * scale)
+
+        image = image.resize((nw, nh), Image.BICUBIC)
+        new_image = Image.new('RGB', (w, h), (128, 128, 128))
+        new_image.paste(image, ((w-nw)//2, (h-nh)//2))
+    else:
+        new_image = image.resize((w, h), Image.BICUBIC)
+
+    return new_image
+
 
 # -------------------------------------- #
 # 读取分类文件，获得类名和数量

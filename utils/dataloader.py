@@ -76,6 +76,7 @@ class YoloDataset(Dataset):
         # 如果不进行mosaic增强，则对数据进行常规随机处理
         else:
             image, box = self.get_random_data(self.annotation_lines[index], self.input_shape, random=self.train)
+
         # 先将图像转换为浮点数数组，在进行归一化操作，最后利用转置将图像形状转化为（channels,height,width）
         image = np.transpose(preprocess_input(np.array(image, dtype=np.float32)), (2, 0, 1))
         box   = np.array(box, dtype=np.float32)
@@ -218,6 +219,11 @@ class YoloDataset(Dataset):
             box_w = box[:, 2] - box[:, 0]
             box_h = box[:, 3] - box[:, 1]
             box = box[np.logical_and(box_w > 1, box_h > 1)]
+
+        # 将图片保存，看常规处理后的图片状态
+        new_image = Image.fromarray(image_data)
+        new_image.save('H:\Project\Yolov4-tiny-clone\client\ormal_out.jpg')
+        image_data = np.array(new_image)
 
         return image_data, box
 
@@ -410,6 +416,11 @@ class YoloDataset(Dataset):
         new_image = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
         new_image = cv2.cvtColor(new_image, cv2.COLOR_HSV2RGB)
 
+        # 将图片保存，看mosaic增强后的图片状态
+        new_image = Image.fromarray(new_image)
+        new_image.save('H:\Project\Yolov4-tiny-clone\client\mosaic_out.jpg')
+        new_image = np.array(new_image)
+
         # -----------------------------------------#
         # 对真实框进行进一步处理
         # -----------------------------------------#
@@ -430,6 +441,11 @@ class YoloDataset(Dataset):
              new_boxes = box_1
         else:
             new_boxes = np.concatenate([box_1, box_2], 0)
+
+        # 将图片保存，看mixup增强后的图片状态
+        new_image1 = np.array(new_image, np.uint8)
+        new_image1 = Image.fromarray(new_image1)
+        new_image1.save('H:\Project\Yolov4-tiny-clone\client\mixup_out.jpg')
         return new_image, new_boxes
 
 
