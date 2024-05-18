@@ -12,7 +12,7 @@ import numpy as np
 
 from PIL import Image
 from tqdm import tqdm
-from utils.utils import cvtColor, preprocess_input
+from utils.utils import cvtColor, preprocess_input, resize_image
 from utils.utils_bbox import DecodeBox
 #from utils.utils_map import get_coco_map, get_map
 
@@ -133,7 +133,55 @@ class Evalcallback():
                 f.write('\n')
 
     def get_map_txt(self, image_id, image, class_names, map_out_path):
+        f = open(os.path.join(map_out_path, "detection-result/"+image_id+".txt"), "w", encoding='utf-8')
+        image_shape = np.array(np.shape(image)[0:2])
+        # 将图片转换为RGB格式
+        image = cvtColor(image)
+        # 将图片尺寸缩放至input_shape,空白处用灰度填充
+        # 注意input_shape为高宽顺序，resize_image输入的尺寸为宽高顺序
+        image_data = resize_image(image, (self.input_shape[1], self.input_shape[0]), self.letterbox_image)
+        # 增加batch_size维度
+        image_data = np.expand_dims(np.transpose(preprocess_input(np.array(image_data, dtype='float32')), (2, 0, 1)), 0)
 
+        with torch.no_grad():
+            # 将数组转化成张量
+            images = torch.from_numpy(image_data)
+            if self.cuda:
+                images = images.cuda()
+
+            # -----------------------------#
+            # 将图像输入网络中进行预测
+            # -----------------------------#
+            outputs = self.net(images)
+            # 将预测结果进行锚框解码
+            outputs = self.bbox_util.decode_box(outputs)
+            # 将同一张图片的两路特征图的预测框进行堆叠，然后进行非极大值抑制
+            results =self.bbox_util.non_max_suppression(torch.cat(outputs, 1), self.num_classes, self.input_shape,
+                                                        image_shape, self.letterbox_image, conf_thres=self.confidence, nms_thres=self.nms_iou)
+            if results[0] is None:
+                return
+
+            top_label = np.array(results[0][:, 6], dtype='int32')
+            top_conf  = results[0][:, 4] * results[0][:, 5]
+            top_boxes = results[0][:, :4]
+
+        # 根据预设的同一图片上最大的展示的锚框数量self.max_boxes，进行筛选,筛选的原则是将置信度从大到小筛选，保留一定数量
+        top_100 = np.argsort(top_conf)[::-1][:self.max_boxes]
+        top_boxes = top_boxes[top_100]
+        top_conf  = top_conf[top_100]
+        top_label = top_label[top_100]
+
+        for i, c in list(enumerate(top_label)):
+            predicted_class = self.class_names[int(c)]
+            box = top_boxes[i]
+            score = str(top_conf[i])
+
+            top, left, bottom, right = box
+            if predicted_class not in class_names
+                continue
+
+            f.write("%s %s %s %s %s %s\n" % (predicted_class, score[:6], str(int(left)), str(int(top)), str(int(right)), str(int(bottom))))
+        f.close()
         return
 
 

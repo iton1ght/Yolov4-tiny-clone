@@ -5,6 +5,13 @@ import numpy as np
 
 class DecodeBox():
     def __init__(self, anchors, num_classes, input_shape, anchors_mask=[[6, 7, 8], [3, 4, 5], [0, 1, 2]]):
+        """
+        :param anchors: 先验框数组
+        :param num_classes: 类别数量
+        :param input_shape: 输出尺寸(416,416)
+        :param anchors_mask: 先验框掩码
+
+        """
         super().__init__()
         self.anchors = anchors
         self.num_classes = num_classes
